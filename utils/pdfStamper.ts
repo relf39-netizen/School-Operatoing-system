@@ -1,4 +1,6 @@
 
+import { PDFDocument, rgb } from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
 
 // --- Helpers ---
 
@@ -77,12 +79,7 @@ interface ReceiveStampOptions {
 }
 
 export const stampReceiveNumber = async ({ fileBase64, bookNumber, date, time, schoolName }: ReceiveStampOptions): Promise<string> => {
-    // Dynamic Import
-    const { PDFDocument, rgb } = await import('pdf-lib');
-    const fontkitModule = await import('@pdf-lib/fontkit');
-    // @ts-ignore
-    const fontkit = fontkitModule.default || fontkitModule;
-
+    
     const existingPdfBytes = dataURItoUint8Array(fileBase64);
     const pdfDoc = await PDFDocument.load(existingPdfBytes);
     
@@ -199,12 +196,6 @@ export const stampPdfDocument = async ({
     signatureYOffset = 0
 }: StampOptions): Promise<string> => {
     
-    onStatusChange('กำลังโหลดไลบรารี PDF...');
-    const { PDFDocument, rgb } = await import('pdf-lib');
-    const fontkitModule = await import('@pdf-lib/fontkit');
-    // @ts-ignore
-    const fontkit = fontkitModule.default || fontkitModule;
-
     onStatusChange('กำลังโหลดฟอนต์และเตรียมเอกสาร...');
 
     let pdfDoc;
