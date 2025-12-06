@@ -26,6 +26,12 @@ export interface School {
   name: string;    // ชื่อโรงเรียน
   district?: string;
   province?: string;
+  
+  // School Settings
+  logoBase64?: string; // Logo specific to this school
+  lat?: number;        // Latitude for Attendance
+  lng?: number;        // Longitude for Attendance
+  radius?: number;     // Allowed radius in meters
 }
 
 export interface Attachment {
@@ -101,6 +107,18 @@ export interface Transaction {
   amount: number;
   type: 'Income' | 'Expense';
   refDoc?: string; // Optional reference document
+}
+
+// New Interface for Secret Audit Logs
+export interface FinanceAuditLog {
+  id: string;
+  schoolId?: string;
+  timestamp: string;
+  actorName: string; // Who performed the action
+  actionType: 'EDIT' | 'DELETE';
+  transactionDescription: string;
+  details: string; // Text description of what changed (e.g., "Changed amount from 500 to 1000")
+  amountInvolved: number;
 }
 
 export interface AttendanceRecord {

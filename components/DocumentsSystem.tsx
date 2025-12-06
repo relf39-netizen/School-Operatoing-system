@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { DocumentItem, Teacher, Attachment, SystemConfig } from '../types';
 import { MOCK_DOCUMENTS, CURRENT_SCHOOL_YEAR } from '../constants';
-import { Search, FileText, Users, PenTool, CheckCircle, FilePlus, Eye, CheckSquare, Loader, Link as LinkIcon, Download, Trash2, File as FileIcon, ExternalLink, Plus, UploadCloud, AlertTriangle, Monitor, FileCheck, ArrowLeft, Send, MousePointerClick, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, FileText, Users, PenTool, CheckCircle, FilePlus, Eye, CheckSquare, Loader, Link as LinkIcon, Download, Trash2, File as FileIcon, ExternalLink, Plus, UploadCloud, AlertTriangle, Monitor, FileCheck, ArrowLeft, Send, MousePointerClick, ChevronLeft, ChevronRight, Settings } from 'lucide-react';
 import { db, isConfigured } from '../firebaseConfig';
 import { collection, addDoc, onSnapshot, query, orderBy, updateDoc, where, doc, getDoc, deleteDoc } from 'firebase/firestore';
 import { stampPdfDocument, stampReceiveNumber } from '../utils/pdfStamper';
@@ -31,7 +31,13 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
     const [selectedDoc, setSelectedDoc] = useState<DocumentItem | null>(null);
 
     // Form State (Admin)
-    const [newDoc, setNewDoc] = useState({ title: '', from: '', priority: 'Normal', description: '' });
+    const [newDoc, setNewDoc] = useState({ 
+        bookNumber: '', // Added custom book number
+        title: '', 
+        from: '', 
+        priority: 'Normal', 
+        description: '' 
+    });
     
     // Attachment Management State
     const [tempAttachments, setTempAttachments] = useState<Attachment[]>([]);
@@ -52,6 +58,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
     // --- Roles Checking ---
     const isDirector = currentUser.roles.includes('DIRECTOR');
     const isDocOfficer = currentUser.roles.includes('DOCUMENT_OFFICER');
+    const isSystemAdmin = currentUser.roles.includes('SYSTEM_ADMIN');
 
     // --- Helpers ---
     const fileToBase64 = (file: File): Promise<string> => {
@@ -61,6 +68,35 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
             reader.onload = () => resolve(reader.result as string);
             reader.onerror = error => reject(error);
         });
+    };
+
+    // Generate Next Book Number Logic
+    const generateNextBookNumber = (currentDocs: DocumentItem[]) => {
+        let maxNum = 0;
+        currentDocs.forEach(d => {
+            // Try to parse "XXX/YYYY"
+            const parts = d.bookNumber.split('/');
+            const num = parseInt(parts[0]);
+            if (!isNaN(num) && num > maxNum) {
+                maxNum = num;
+            }
+        });
+        // Increment and Format
+        return `${String(maxNum + 1).padStart(3, '0')}/${CURRENT_SCHOOL_YEAR}`;
+    };
+
+    // Init Create Form
+    const handleInitCreate = () => {
+        const nextNum = generateNextBookNumber(docs);
+        setNewDoc({
+            bookNumber: nextNum,
+            title: '',
+            from: '',
+            priority: 'Normal',
+            description: ''
+        });
+        setTempAttachments([]);
+        setViewMode('CREATE');
     };
 
     // Helper to convert Drive View URL to Download URL (for PDF fetching)
@@ -177,8 +213,10 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                 
                 if (file.type === 'application/pdf' && isFirstFile) {
                     setUploadProgress('กำลังอัปโหลดไฟล์ไปที่ Google Drive และลงเลขที่รับ...');
-                    const nextNum = (docs.length + 46).toString().padStart(3, '0') + `/${CURRENT_SCHOOL_YEAR}`;
                     
+                    // Use the custom book number from state instead of auto-calc logic here
+                    const bookNumToStamp = newDoc.bookNumber || "XXX/XXXX";
+
                     // Format Date & Time for Stamp
                     const now = new Date();
                     const thaiDate = now.toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -187,7 +225,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                     try {
                         base64Data = await stampReceiveNumber({
                             fileBase64: base64Data,
-                            bookNumber: nextNum,
+                            bookNumber: bookNumToStamp,
                             date: thaiDate,
                             time: thaiTime,
                             schoolName: sysConfig?.schoolName || 'โรงเรียนตัวอย่างวิทยา',
@@ -270,17 +308,22 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
 
     const handleCreateDoc = async (e: React.FormEvent) => {
         e.preventDefault();
+        
+        if (!newDoc.bookNumber) {
+            alert("กรุณาระบุเลขที่รับ");
+            return;
+        }
+
         setIsUploading(true);
         setUploadProgress('กำลังส่งหนังสือไปหาผู้อำนวยการ...');
         
-        const nextNum = (docs.length + 46).toString().padStart(3, '0');
         const now = new Date();
         const docId = Date.now().toString();
 
         try {
             const created: DocumentItem = {
                 id: docId,
-                bookNumber: `${nextNum}/${CURRENT_SCHOOL_YEAR}`,
+                bookNumber: newDoc.bookNumber, // Use user input
                 title: newDoc.title,
                 from: newDoc.from,
                 description: newDoc.description,
@@ -302,7 +345,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
             // Cleanup & Redirect to List View (Refresh)
             setIsUploading(false);
             setUploadProgress('');
-            setNewDoc({ title: '', from: '', priority: 'Normal', description: '' });
+            setNewDoc({ bookNumber: '', title: '', from: '', priority: 'Normal', description: '' });
             setTempAttachments([]);
             setLinkInput('');
             setViewMode('LIST');
@@ -317,7 +360,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
 
     const handleDeleteDoc = async (e: React.MouseEvent, docId: string) => {
         e.stopPropagation(); // Prevent opening detail
-        if (!confirm("ยืนยันการลบหนังสือราชการนี้? \n(การกระทำนี้ไม่สามารถย้อนกลับได้)")) return;
+        if (!confirm("ยืนยันการลบหนังสือราชการนี้? \n(การกระทำนี้จะลบถาวร)")) return;
 
         try {
             if (isConfigured && db) {
@@ -327,6 +370,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                 if (!snapshot.empty) {
                     const docRef = snapshot.docs[0].ref;
                     await deleteDoc(docRef);
+                    // alert("ลบข้อมูลเรียบร้อยแล้ว");
                 }
             } else {
                 setDocs(docs.filter(d => d.id !== docId));
@@ -590,7 +634,6 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
         if (!targetDocId) setViewMode('LIST');
     };
     
-    // Wrapper for List View One-Click Action
     const handleOpenAndAck = async (doc: DocumentItem, url: string) => {
         if (!url) return;
         window.open(url, '_blank');
@@ -609,7 +652,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
 
     // --- Filtering Logic ---
     const filteredDocs = docs.filter(doc => {
-        if (isDirector || isDocOfficer) return true;
+        if (isDirector || isDocOfficer || isSystemAdmin) return true;
         return doc.status === 'Distributed' && doc.targetTeachers.includes(currentUser.id);
     });
 
@@ -650,8 +693,8 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                             <input type="text" placeholder="ค้นหาหนังสือ..." className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500" />
                         </div>
-                        {isDocOfficer && (
-                            <button onClick={() => setViewMode('CREATE')} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow-sm flex items-center gap-2">
+                        {(isDocOfficer || isSystemAdmin) && (
+                            <button onClick={handleInitCreate} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow-sm flex items-center gap-2">
                                 <FilePlus size={18} /> ลงรับหนังสือ
                             </button>
                         )}
@@ -723,8 +766,8 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                                                  </span>
                                             )}
                                             
-                                            {/* DELETE BUTTON for Officer (Pending Only) */}
-                                            {isDocOfficer && doc.status === 'PendingDirector' && (
+                                            {/* DELETE BUTTON for Officer (Pending Only) OR Admin (All) */}
+                                            {((isDocOfficer && doc.status === 'PendingDirector') || isSystemAdmin) && (
                                                 <button 
                                                     onClick={(e) => handleDeleteDoc(e, doc.id)}
                                                     className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors z-10"
@@ -858,6 +901,21 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                     <form onSubmit={handleCreateDoc} className="space-y-4">
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 mb-1">เลขที่รับ (แก้ไขได้)</label>
+                                    <div className="relative">
+                                        <Settings className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16}/>
+                                        <input 
+                                            required 
+                                            type="text" 
+                                            value={newDoc.bookNumber} 
+                                            onChange={e => setNewDoc({...newDoc, bookNumber: e.target.value})} 
+                                            className="w-full pl-9 pr-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono font-bold text-slate-700"
+                                            placeholder="XXX/25XX"
+                                        />
+                                    </div>
+                                    <p className="text-[10px] text-slate-400 mt-1">* ระบบคำนวณเลขถัดไปให้อัตโนมัติ ท่านสามารถแก้ไขเพื่อตั้งค่าเริ่มต้นใหม่ได้</p>
+                                </div>
                                 <div>
                                     <label className="block text-sm font-medium text-slate-700 mb-1">เรื่อง</label>
                                     <input required type="text" value={newDoc.title} onChange={e => setNewDoc({...newDoc, title: e.target.value})} className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />

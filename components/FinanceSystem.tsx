@@ -1,12 +1,13 @@
 
 
+
 import React, { useState, useEffect } from 'react';
-import { Transaction, FinanceAccount, Teacher } from '../types';
+import { Transaction, FinanceAccount, Teacher, FinanceAuditLog } from '../types';
 import { MOCK_TRANSACTIONS, MOCK_ACCOUNTS } from '../constants';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
-import { TrendingUp, TrendingDown, DollarSign, Plus, Wallet, FileText, ArrowRight, PlusCircle, LayoutGrid, List, ArrowLeft, Loader, Database, ServerOff } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, Plus, Wallet, FileText, ArrowRight, PlusCircle, LayoutGrid, List, ArrowLeft, Loader, Database, ServerOff, Edit2, Trash2, X, Save, ShieldAlert, Eye } from 'lucide-react';
 import { db, isConfigured } from '../firebaseConfig';
-import { collection, addDoc, onSnapshot, query, where, orderBy } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, query, where, orderBy, doc, deleteDoc, updateDoc } from 'firebase/firestore';
 
 interface FinanceSystemProps {
     currentUser: Teacher;
@@ -21,6 +22,7 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser }) => {
     // State
     const [accounts, setAccounts] = useState<FinanceAccount[]>([]);
     const [transactions, setTransactions] = useState<Transaction[]>([]);
+    const [auditLogs, setAuditLogs] = useState<FinanceAuditLog[]>([]); // For Director
     const [isLoadingData, setIsLoadingData] = useState(true);
     
     // Determine default active tab
@@ -34,6 +36,13 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser }) => {
     // UI State
     const [showTransForm, setShowTransForm] = useState(false);
     const [showAccountForm, setShowAccountForm] = useState(false);
+    
+    // Edit Transaction State
+    const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
+    const [showEditModal, setShowEditModal] = useState(false);
+
+    // Audit Log View State (Director Only)
+    const [showAuditModal, setShowAuditModal] = useState(false);
 
     // Form Data
     const [newTrans, setNewTrans] = useState({ date: new Date().toISOString().split('T')[0], desc: '', amount: '', type: 'Income' });
@@ -43,6 +52,7 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser }) => {
     useEffect(() => {
         let unsubAccounts: () => void;
         let unsubTrans: () => void;
+        let unsubLogs: () => void;
         let timeoutId: NodeJS.Timeout;
 
         if (isConfigured && db) {
@@ -59,7 +69,6 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser }) => {
             // Sync Accounts
             const qAccounts = query(collection(db, "finance_accounts"), where("schoolId", "==", currentUser.schoolId));
             unsubAccounts = onSnapshot(qAccounts, (snapshot) => {
-                // Keep waiting for transactions to load fully
                 const fetched: FinanceAccount[] = [];
                 snapshot.forEach((doc) => {
                     fetched.push({ id: doc.id, ...doc.data() } as FinanceAccount);
@@ -80,11 +89,23 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser }) => {
             }, (error) => {
                  clearTimeout(timeoutId);
                  console.error(error);
-                 // Fallback on error
                  setAccounts(MOCK_ACCOUNTS);
                  setTransactions(MOCK_TRANSACTIONS);
                  setIsLoadingData(false);
             });
+
+            // Sync Audit Logs (ONLY IF DIRECTOR)
+            if (isDirector) {
+                const qLogs = query(collection(db, "finance_audit_logs"), where("schoolId", "==", currentUser.schoolId), orderBy("timestamp", "desc"));
+                unsubLogs = onSnapshot(qLogs, (snapshot) => {
+                    const fetchedLogs: FinanceAuditLog[] = [];
+                    snapshot.forEach((doc) => {
+                        fetchedLogs.push({ id: doc.id, ...doc.data() } as FinanceAuditLog);
+                    });
+                    setAuditLogs(fetchedLogs);
+                });
+            }
+
         } else {
             // Offline Mode
             setAccounts(MOCK_ACCOUNTS);
@@ -96,10 +117,11 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser }) => {
             if (timeoutId) clearTimeout(timeoutId);
             if (unsubAccounts) unsubAccounts();
             if (unsubTrans) unsubTrans();
+            if (unsubLogs) unsubLogs();
         };
-    }, [currentUser.schoolId]);
+    }, [currentUser.schoolId, isDirector]);
 
-    // Update active tab if user switches role and loses access to current tab
+    // Update active tab logic based on permissions
     useEffect(() => {
         if (!isDirector) {
             if (activeTab === 'Budget' && !isBudgetOfficer && isNonBudgetOfficer) {
@@ -109,6 +131,15 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser }) => {
             }
         }
     }, [currentUser, isBudgetOfficer, isNonBudgetOfficer, isDirector, activeTab]);
+
+    // --- Permissions Helpers ---
+    // Strict visibility check: If teacher doesn't have role, don't show specific tabs
+    const canSeeBudget = isDirector || isBudgetOfficer;
+    const canSeeNonBudget = isDirector || isNonBudgetOfficer;
+    
+    // Officers can edit/delete in their respective tabs. Directors can view audits.
+    const canEditBudget = isBudgetOfficer;
+    const canEditNonBudget = isNonBudgetOfficer;
 
     // --- Logic ---
 
@@ -182,6 +213,106 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser }) => {
         setNewTrans({ date: new Date().toISOString().split('T')[0], desc: '', amount: '', type: 'Income' });
         setShowTransForm(false);
     };
+
+    // --- EDIT & DELETE with AUDIT LOG ---
+
+    const recordAuditLog = async (log: FinanceAuditLog) => {
+        if (isConfigured && db) {
+            try {
+                // Remove 'id' if passing to addDoc, it generates one
+                const { id, ...logData } = log; 
+                await addDoc(collection(db, "finance_audit_logs"), logData);
+            } catch(e) {
+                console.error("Failed to record audit log", e);
+            }
+        } else {
+            // Mock mode logs
+            setAuditLogs([log, ...auditLogs]);
+        }
+    };
+
+    const handleDeleteTransaction = async (t: Transaction) => {
+        if (!confirm('ยืนยันการลบรายการนี้? \n(การกระทำนี้จะถูกบันทึกในระบบตรวจสอบ)')) return;
+
+        // 1. Record Audit Log (Secretly)
+        const log: FinanceAuditLog = {
+            id: `log_${Date.now()}`,
+            schoolId: currentUser.schoolId,
+            timestamp: new Date().toISOString(),
+            actorName: currentUser.name,
+            actionType: 'DELETE',
+            transactionDescription: t.description,
+            amountInvolved: t.amount,
+            details: `Deleted transaction: ${t.description} (${t.amount} THB) dated ${t.date}`
+        };
+        await recordAuditLog(log);
+
+        // 2. Perform Delete
+        if (isConfigured && db) {
+            try {
+                await deleteDoc(doc(db, "finance_transactions", t.id));
+            } catch(e) {
+                alert("เกิดข้อผิดพลาดในการลบข้อมูล");
+            }
+        } else {
+            setTransactions(transactions.filter(tr => tr.id !== t.id));
+        }
+    };
+
+    const handleEditClick = (t: Transaction) => {
+        setEditingTransaction({ ...t });
+        setShowEditModal(true);
+    };
+
+    const handleSaveEdit = async () => {
+        if (!editingTransaction) return;
+
+        // Find original for comparison
+        const original = transactions.find(t => t.id === editingTransaction.id);
+        if (!original) return;
+
+        // Build Change Details
+        const changes = [];
+        if (original.amount !== editingTransaction.amount) changes.push(`Amount: ${original.amount} -> ${editingTransaction.amount}`);
+        if (original.description !== editingTransaction.description) changes.push(`Desc: ${original.description} -> ${editingTransaction.description}`);
+        if (original.date !== editingTransaction.date) changes.push(`Date: ${original.date} -> ${editingTransaction.date}`);
+        if (original.type !== editingTransaction.type) changes.push(`Type: ${original.type} -> ${editingTransaction.type}`);
+        
+        if (changes.length === 0) {
+            setShowEditModal(false);
+            return;
+        }
+
+        // 1. Record Audit Log
+        const log: FinanceAuditLog = {
+            id: `log_${Date.now()}`,
+            schoolId: currentUser.schoolId,
+            timestamp: new Date().toISOString(),
+            actorName: currentUser.name,
+            actionType: 'EDIT',
+            transactionDescription: original.description,
+            amountInvolved: editingTransaction.amount,
+            details: `Edited: ${changes.join(', ')}`
+        };
+        await recordAuditLog(log);
+
+        // 2. Update Data
+        if (isConfigured && db) {
+             try {
+                const docRef = doc(db, "finance_transactions", editingTransaction.id);
+                const { id, ...data } = editingTransaction;
+                await updateDoc(docRef, data);
+            } catch(e) {
+                alert("เกิดข้อผิดพลาดในการแก้ไขข้อมูล");
+            }
+        } else {
+            setTransactions(transactions.map(t => t.id === editingTransaction.id ? editingTransaction : t));
+        }
+
+        setShowEditModal(false);
+        setEditingTransaction(null);
+    };
+
 
     // Filter Logic
     const getFilteredAccounts = () => accounts.filter(a => a.type === activeTab);
@@ -432,12 +563,16 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser }) => {
                                         <th className="px-4 py-3">รายละเอียด</th>
                                         <th className="px-4 py-3 text-right w-32">จำนวนเงิน</th>
                                         <th className="px-4 py-3 text-center w-20">สถานะ</th>
+                                        {/* Action Column for Officers */}
+                                        {((activeTab === 'Budget' && canEditBudget) || (activeTab === 'NonBudget' && canEditNonBudget)) && (
+                                            <th className="px-4 py-3 text-center w-20">จัดการ</th>
+                                        )}
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
                                     {displayTransactions.length === 0 ? (
                                         <tr>
-                                            <td colSpan={4} className="text-center py-10 text-slate-400">ยังไม่มีรายการบันทึก</td>
+                                            <td colSpan={5} className="text-center py-10 text-slate-400">ยังไม่มีรายการบันทึก</td>
                                         </tr>
                                     ) : (
                                         displayTransactions.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(t => (
@@ -452,6 +587,27 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser }) => {
                                                         {t.type === 'Income' ? 'รายรับ' : 'รายจ่าย'}
                                                      </span>
                                                 </td>
+                                                {/* Action Buttons: Only visible to authorized officer of that department */}
+                                                {((activeTab === 'Budget' && canEditBudget) || (activeTab === 'NonBudget' && canEditNonBudget)) && (
+                                                    <td className="px-4 py-3 text-center">
+                                                        <div className="flex justify-center gap-1">
+                                                            <button 
+                                                                onClick={() => handleEditClick(t)}
+                                                                className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                                                                title="แก้ไข"
+                                                            >
+                                                                <Edit2 size={16}/>
+                                                            </button>
+                                                            <button 
+                                                                onClick={() => handleDeleteTransaction(t)}
+                                                                className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                                                                title="ลบ"
+                                                            >
+                                                                <Trash2 size={16}/>
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                )}
                                             </tr>
                                         ))
                                     )}
@@ -496,23 +652,37 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser }) => {
         </div>
     );
 
+    // --- MAIN RENDER ---
+
     return (
         <div className="space-y-6 animate-fade-in pb-10">
+            {/* Top Bar */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div>
                     <h2 className="text-2xl font-bold text-slate-800">ระบบบริหารการเงิน</h2>
                     <p className="text-slate-500">จัดการเงินงบประมาณและเงินนอกงบประมาณ</p>
                 </div>
-                {/* Offline/Online Indicator */}
-                <div className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 ${isConfigured ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                    {isConfigured ? <Database size={12}/> : <ServerOff size={12}/>}
-                    {isConfigured ? 'ออนไลน์ (Firebase)' : 'ออฟไลน์ (Mock Data)'}
+                <div className="flex gap-2 items-center">
+                     {/* SECRET BUTTON FOR DIRECTOR ONLY: AUDIT LOGS */}
+                     {isDirector && (
+                        <button 
+                            onClick={() => setShowAuditModal(true)}
+                            className="p-2 bg-slate-800 text-yellow-400 rounded-full shadow-lg hover:scale-110 transition-transform flex items-center gap-2 px-4"
+                            title="ดูประวัติการแก้ไขข้อมูล (ลับ)"
+                        >
+                            <ShieldAlert size={18}/>
+                            <span className="text-xs font-bold text-white">ประวัติการแก้ไข</span>
+                        </button>
+                    )}
+                    <div className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 ${isConfigured ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                        {isConfigured ? <Database size={12}/> : <ServerOff size={12}/>}
+                        {isConfigured ? 'ออนไลน์ (Firebase)' : 'ออฟไลน์ (Mock Data)'}
+                    </div>
                 </div>
             </div>
             
             <div className="bg-white p-1 rounded-lg border border-slate-200 flex shadow-sm w-fit">
-                {/* Only show buttons if user has role or is director */}
-                {(isDirector || isBudgetOfficer) && (
+                {(canSeeBudget) && (
                     <button 
                         onClick={() => { setActiveTab('Budget'); setSelectedAccount(null); }}
                         className={`px-4 py-2 rounded-md text-sm font-bold flex items-center gap-2 transition-all ${activeTab === 'Budget' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-800'}`}
@@ -520,7 +690,7 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser }) => {
                         <LayoutGrid size={16}/> เงินงบประมาณ
                     </button>
                 )}
-                {(isDirector || isNonBudgetOfficer) && (
+                {(canSeeNonBudget) && (
                     <button 
                         onClick={() => { setActiveTab('NonBudget'); setSelectedAccount(null); }}
                         className={`px-4 py-2 rounded-md text-sm font-bold flex items-center gap-2 transition-all ${activeTab === 'NonBudget' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-800'}`}
@@ -532,6 +702,108 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser }) => {
 
             {/* Main Content Switcher */}
             {activeTab === 'Budget' && !selectedAccount ? renderBudgetOverview() : renderDetailView()}
+
+            {/* --- MODAL: EDIT TRANSACTION --- */}
+            {showEditModal && editingTransaction && (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 animate-slide-down">
+                        <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
+                            <Edit2 size={20} className="text-orange-500"/> แก้ไขรายการ
+                        </h3>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm text-slate-600 mb-1">วันที่</label>
+                                <input 
+                                    type="date" 
+                                    value={editingTransaction.date}
+                                    onChange={e => setEditingTransaction({...editingTransaction, date: e.target.value})}
+                                    className="w-full px-3 py-2 border rounded-lg outline-none focus:ring-2"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm text-slate-600 mb-1">รายละเอียด</label>
+                                <input 
+                                    type="text" 
+                                    value={editingTransaction.description}
+                                    onChange={e => setEditingTransaction({...editingTransaction, description: e.target.value})}
+                                    className="w-full px-3 py-2 border rounded-lg outline-none focus:ring-2"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm text-slate-600 mb-1">จำนวนเงิน</label>
+                                <input 
+                                    type="number" 
+                                    value={editingTransaction.amount}
+                                    onChange={e => setEditingTransaction({...editingTransaction, amount: parseFloat(e.target.value)})}
+                                    className="w-full px-3 py-2 border rounded-lg outline-none focus:ring-2 font-bold"
+                                />
+                            </div>
+                             <div>
+                                <label className="block text-sm text-slate-600 mb-1">ประเภท</label>
+                                <select 
+                                    value={editingTransaction.type}
+                                    onChange={e => setEditingTransaction({...editingTransaction, type: e.target.value as 'Income' | 'Expense'})}
+                                    className="w-full px-3 py-2 border rounded-lg outline-none focus:ring-2"
+                                >
+                                    <option value="Income">รายรับ</option>
+                                    <option value="Expense">รายจ่าย</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div className="flex gap-3 mt-6">
+                            <button onClick={() => setShowEditModal(false)} className="flex-1 py-2 bg-slate-100 text-slate-600 rounded-lg">ยกเลิก</button>
+                            <button onClick={handleSaveEdit} className="flex-1 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-lg">บันทึกการแก้ไข</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* --- MODAL: AUDIT LOGS (DIRECTOR ONLY) --- */}
+            {showAuditModal && isDirector && (
+                <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full h-[80vh] flex flex-col animate-slide-down">
+                        <div className="p-4 border-b bg-slate-900 text-white rounded-t-xl flex justify-between items-center">
+                            <div className="flex items-center gap-2">
+                                <ShieldAlert size={20} className="text-yellow-400"/>
+                                <h3 className="font-bold text-lg">บันทึกประวัติการแก้ไขข้อมูล (Audit Log)</h3>
+                            </div>
+                            <button onClick={() => setShowAuditModal(false)} className="text-slate-400 hover:text-white">
+                                <X size={24}/>
+                            </button>
+                        </div>
+                        <div className="flex-1 overflow-auto p-4 bg-slate-50">
+                            {auditLogs.length === 0 ? (
+                                <div className="text-center py-20 text-slate-400">ยังไม่มีประวัติการแก้ไขข้อมูล</div>
+                            ) : (
+                                <div className="space-y-4">
+                                    {auditLogs.map(log => (
+                                        <div key={log.id} className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-slate-400">
+                                            <div className="flex justify-between items-start mb-2">
+                                                <div className="flex items-center gap-2">
+                                                    <span className={`px-2 py-0.5 rounded text-xs font-bold text-white ${log.actionType === 'DELETE' ? 'bg-red-600' : 'bg-orange-500'}`}>
+                                                        {log.actionType === 'DELETE' ? 'ลบข้อมูล' : 'แก้ไขข้อมูล'}
+                                                    </span>
+                                                    <span className="text-sm font-bold text-slate-700">{log.transactionDescription}</span>
+                                                </div>
+                                                <span className="text-xs text-slate-400">{new Date(log.timestamp).toLocaleString('th-TH')}</span>
+                                            </div>
+                                            <div className="text-sm text-slate-600 mb-1">
+                                                โดย: <span className="font-bold">{log.actorName}</span>
+                                            </div>
+                                            <div className="text-xs bg-slate-100 p-2 rounded text-slate-500 font-mono">
+                                                {log.details}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                        <div className="p-4 border-t bg-white text-xs text-slate-400 text-center">
+                            * ข้อมูลนี้เห็นเฉพาะผู้อำนวยการเท่านั้น
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
