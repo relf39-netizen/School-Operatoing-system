@@ -152,6 +152,7 @@ export interface SystemConfig {
   scriptUrl: string;     // Google Apps Script Web App URL for handling uploads
   schoolName?: string;   // School Name for Headers
   directorSignatureBase64?: string; // Base64 PNG of Director Signature
+  schoolLogoBase64?: string; // Base64 PNG of School Logo / Garuda
   
   // Signature Customization
   directorSignatureScale?: number;    // Scale factor (default 1.0)

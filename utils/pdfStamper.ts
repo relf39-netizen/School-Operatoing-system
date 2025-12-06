@@ -1,4 +1,5 @@
 
+
 import { PDFDocument, rgb } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 
@@ -76,9 +77,10 @@ interface ReceiveStampOptions {
     date: string;     // Expecting full Thai date string e.g., "2 ธันวาคม 2568"
     time: string;     // Expecting time string e.g., "11.30 น."
     schoolName?: string;
+    schoolLogoBase64?: string; // New: Logo
 }
 
-export const stampReceiveNumber = async ({ fileBase64, bookNumber, date, time, schoolName }: ReceiveStampOptions): Promise<string> => {
+export const stampReceiveNumber = async ({ fileBase64, bookNumber, date, time, schoolName, schoolLogoBase64 }: ReceiveStampOptions): Promise<string> => {
     
     const existingPdfBytes = dataURItoUint8Array(fileBase64);
     const pdfDoc = await PDFDocument.load(existingPdfBytes);
@@ -93,9 +95,9 @@ export const stampReceiveNumber = async ({ fileBase64, bookNumber, date, time, s
 
     // Box Config (Slightly larger height and line height for breathing room)
     const fontSize = 14; 
-    const lineHeight = 14; // Increased from 11 to 14 for better spacing
-    const boxWidth = 150; 
-    const boxHeight = 70;  // Increased from 50 to 70 for padding
+    const lineHeight = 14; 
+    const boxWidth = 160; 
+    const boxHeight = 75; 
     const margin = 20;
     
     const x = width - boxWidth - margin;
@@ -114,20 +116,61 @@ export const stampReceiveNumber = async ({ fileBase64, bookNumber, date, time, s
     // Color
     const stampColor = rgb(0.8, 0.2, 0.2);
 
-    // Text Positioning - Added padding top
+    // Text Positioning
     const textX = x + 6;
-    const paddingTop = 12; // Space from top border
+    const paddingTop = 12; 
     let currentY = y + boxHeight - paddingTop;
 
-    // Line 1: School Name
+    // Line 1: School Name (with Logo if avail)
     const school = schoolName || 'โรงเรียน...................';
-    firstPage.drawText(school, {
-        x: textX,
-        y: currentY,
-        size: fontSize,
-        font: thaiFont,
-        color: stampColor,
-    });
+    
+    if (schoolLogoBase64) {
+        try {
+            const logoBytes = dataURItoUint8Array(schoolLogoBase64);
+            let logoImage;
+            if(schoolLogoBase64.includes('png')) logoImage = await pdfDoc.embedPng(logoBytes);
+            else logoImage = await pdfDoc.embedJpg(logoBytes);
+            
+            // Tiny logo next to school name? No, maybe top left of box
+            // Let's put it top center of box, small
+            const logoDim = logoImage.scaleToFit(20, 20);
+            
+            // Adjust school name to be a bit lower or centered
+            // Actually, let's put logo to the left of School Name
+            firstPage.drawImage(logoImage, {
+                x: textX,
+                y: currentY - 2, // adjust for baseline
+                width: logoDim.width,
+                height: logoDim.height
+            });
+            
+            firstPage.drawText(school, {
+                x: textX + 24, // Shift text right
+                y: currentY,
+                size: fontSize,
+                font: thaiFont,
+                color: stampColor,
+            });
+        } catch(e) {
+            // Fallback no logo
+             firstPage.drawText(school, {
+                x: textX,
+                y: currentY,
+                size: fontSize,
+                font: thaiFont,
+                color: stampColor,
+            });
+        }
+    } else {
+        firstPage.drawText(school, {
+            x: textX,
+            y: currentY,
+            size: fontSize,
+            font: thaiFont,
+            color: stampColor,
+        });
+    }
+
     currentY -= lineHeight;
 
     // Line 2: Book Number
@@ -173,6 +216,7 @@ interface StampOptions {
     directorPosition: string;
     signatureImageBase64?: string;
     schoolName?: string;
+    schoolLogoBase64?: string; // New: Logo
     targetPage?: number; // 1-based index
     onStatusChange: (status: string) => void; 
     
@@ -190,6 +234,7 @@ export const stampPdfDocument = async ({
     directorPosition,
     signatureImageBase64,
     schoolName,
+    schoolLogoBase64,
     targetPage = 1,
     onStatusChange,
     signatureScale = 1,
@@ -225,7 +270,7 @@ export const stampPdfDocument = async ({
             width, height,
         });
     } else {
-        // Create new blank A4 document (Command Sheet) - FALLBACK ONLY
+        // Create new blank A4 document (Command Sheet)
         pdfDoc = await PDFDocument.create();
         pdfDoc.addPage([595.28, 841.89]); // A4 Size
     }
@@ -239,7 +284,7 @@ export const stampPdfDocument = async ({
     // Select Target Page (Convert 1-based to 0-based)
     let pageIndex = (targetPage || 1) - 1;
     if (pageIndex < 0) pageIndex = 0;
-    if (pageIndex >= pages.length) pageIndex = pages.length - 1; // Fallback to last page
+    if (pageIndex >= pages.length) pageIndex = pages.length - 1; 
     
     const targetPdfPage = pages[pageIndex];
     const pageWidth = targetPdfPage.getWidth();
@@ -254,13 +299,12 @@ export const stampPdfDocument = async ({
     const boxX = pageWidth - boxWidth - rightMargin;
     
     const fontSize = 14; 
-    const lineHeight = fontSize * 1.05; // Very tight line spacing
+    const lineHeight = fontSize * 1.05; 
     const maxWidth = boxWidth - 10;
 
     // Content Prep
     onStatusChange('กำลังเขียนคำสั่งการ...');
     
-    // NOTE: Removed notifyToText as per request. Only printing command text.
     let commandLines: string[] = [];
     commandText.split('\n').forEach(line => {
         commandLines = [...commandLines, ...splitTextIntoLines(line, maxWidth, fontSize, thaiFont)];
@@ -269,7 +313,6 @@ export const stampPdfDocument = async ({
     const textBlockHeight = (commandLines.length) * lineHeight;
     
     // Footer Height Calculation (Sig + Name + School + Date)
-    // Reduce signature block height to stick closer to text
     const signatureBlockHeight = 85; 
     const paddingHeight = 15;
     
@@ -292,8 +335,7 @@ export const stampPdfDocument = async ({
     });
 
     // Drawing Logic (Inside Box)
-    // Start writing text from TOP of the box downwards
-    let currentY = newBoxY + newBoxHeight - 20; // Start 20pts from top
+    let currentY = newBoxY + newBoxHeight - 20; 
 
     // Draw Command
     commandLines.forEach((line) => {
@@ -307,13 +349,11 @@ export const stampPdfDocument = async ({
         currentY -= lineHeight;
     });
 
-    // --- Footer Section (Signature, Name, School, Date) ---
-    // We position this absolute from the BOTTOM of the box
-    
-    let footerY = newBoxY + 10; // Start 10pts from bottom
+    // --- Footer Section ---
+    let footerY = newBoxY + 10; 
     const centerX = boxX + (boxWidth / 2);
 
-    // 4. Draw Date (Bottom most)
+    // 4. Draw Date (Bottom)
     const dateText = formatDateThai(new Date());
     const dateWidth = thaiFont.widthOfTextAtSize(dateText, fontSize);
     
@@ -326,9 +366,10 @@ export const stampPdfDocument = async ({
     });
     footerY += lineHeight;
 
-    // 3. Draw School Name (Above Date)
+    // 3. Draw School Name (Above Date) - WITH LOGO if exists
     const schoolText = schoolName || 'โรงเรียน...................';
     const schoolWidth = thaiFont.widthOfTextAtSize(schoolText, fontSize);
+    
     targetPdfPage.drawText(schoolText, {
          x: centerX - (schoolWidth / 2),
          y: footerY,
@@ -336,9 +377,47 @@ export const stampPdfDocument = async ({
          font: thaiFont,
          color: rgb(0, 0, 0)
     });
-    footerY += lineHeight;
+    
+    // Draw Logo Above School Name (if available)
+    if (schoolLogoBase64) {
+        try {
+            const logoBytes = dataURItoUint8Array(schoolLogoBase64);
+            let logoImage;
+            if(schoolLogoBase64.includes('png')) logoImage = await pdfDoc.embedPng(logoBytes);
+            else logoImage = await pdfDoc.embedJpg(logoBytes);
+            
+            const maxLogoW = 30;
+            const maxLogoH = 30;
+            const logoDim = logoImage.scaleToFit(maxLogoW, maxLogoH);
+            
+            // Place above the School Name
+            // footerY is currently at baseline of school name.
+            // Move up by font height + padding
+            const logoY = footerY + lineHeight; 
+            
+            // Note: This overlaps with "Director Name" space, so we must push Director Name up.
+            // But logic draws from bottom up. So next lines (Director Name) will be drawn at updated footerY.
+            
+            // Actually, let's draw logo here.
+            targetPdfPage.drawImage(logoImage, {
+                x: centerX - (logoDim.width / 2),
+                y: logoY,
+                width: logoDim.width,
+                height: logoDim.height
+            });
+            
+            // Increase footerY to account for logo height, so Director Name is drawn above logo
+            footerY += (logoDim.height + 5);
+            
+        } catch(e) {
+            console.warn("Embed Logo Error", e);
+            footerY += lineHeight; // Just normal spacing
+        }
+    } else {
+        footerY += lineHeight;
+    }
 
-    // 2. Draw Director Name (Above School)
+    // 2. Draw Director Name (Above School/Logo)
     const nameText = `( ${directorName} )`;
     const nameWidth = thaiFont.widthOfTextAtSize(nameText, fontSize);
     targetPdfPage.drawText(nameText, {
@@ -350,21 +429,19 @@ export const stampPdfDocument = async ({
     });
     footerY += (lineHeight + 5);
 
-    // 1. Draw Signature Image (Above Name) with Scaling and Offset
+    // 1. Draw Signature Image (Above Name)
     onStatusChange('กำลังประทับลายเซ็น...');
     
     if (signatureImageBase64) {
         try {
             const sigBytes = dataURItoUint8Array(signatureImageBase64);
-            const sigImage = await pdfDoc.embedPng(sigBytes); // Assuming PNG for transparency
+            const sigImage = await pdfDoc.embedPng(sigBytes);
             
-            // Apply Scaling
             const maxSigWidth = 80 * (signatureScale || 1);
             const maxSigHeight = 40 * (signatureScale || 1);
             
             const sigDims = sigImage.scaleToFit(maxSigWidth, maxSigHeight);
             
-            // Apply Vertical Offset (Positive = Up, Negative = Down)
             const finalSigY = footerY + (signatureYOffset || 0);
 
             targetPdfPage.drawImage(sigImage, {

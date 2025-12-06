@@ -1,3 +1,5 @@
+
+
 import React, { useState, useEffect, useRef } from 'react';
 import { DocumentItem, Teacher, Attachment, SystemConfig } from '../types';
 import { MOCK_DOCUMENTS, CURRENT_SCHOOL_YEAR } from '../constants';
@@ -171,7 +173,8 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                             bookNumber: nextNum,
                             date: thaiDate,
                             time: thaiTime,
-                            schoolName: sysConfig?.schoolName || 'โรงเรียนตัวอย่างวิทยา'
+                            schoolName: sysConfig?.schoolName || 'โรงเรียนตัวอย่างวิทยา',
+                            schoolLogoBase64: sysConfig?.schoolLogoBase64
                         });
                     } catch (stampErr) {
                         console.error("Stamp Error", stampErr);
@@ -335,6 +338,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
              // 1. Get Config for Signature and School Name
             let sigBase64 = sysConfig?.directorSignatureBase64;
             let schoolName = sysConfig?.schoolName;
+            let logoBase64 = sysConfig?.schoolLogoBase64;
             let sigScale = sysConfig?.directorSignatureScale || 1;
             let sigYOffset = sysConfig?.directorSignatureYOffset || 0;
 
@@ -409,6 +413,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                     directorPosition: currentUser.position,
                     signatureImageBase64: sigBase64,
                     schoolName: schoolName,
+                    schoolLogoBase64: logoBase64,
                     targetPage: stampPage,
                     onStatusChange: setProcessingMessage,
                     signatureScale: sigScale,
@@ -427,6 +432,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                     directorPosition: currentUser.position,
                     signatureImageBase64: sigBase64,
                     schoolName: schoolName,
+                    schoolLogoBase64: logoBase64,
                     targetPage: 1,
                     onStatusChange: (msg) => setProcessingMessage(msg),
                     signatureScale: sigScale,
