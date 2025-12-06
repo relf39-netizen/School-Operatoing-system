@@ -1,8 +1,7 @@
 
-
 import React, { useState, useEffect } from 'react';
 import { Teacher, TeacherRole, SystemConfig, School } from '../types';
-import { Users, UserPlus, Edit, Trash2, CheckSquare, Square, Save, X, Settings, Database, Link as LinkIcon, AlertCircle, UploadCloud, ImageIcon, MoveVertical, Maximize, Shield, MapPin, Target } from 'lucide-react';
+import { Users, UserPlus, Edit, Trash2, CheckSquare, Square, Save, X, Settings, Database, Link as LinkIcon, AlertCircle, UploadCloud, ImageIcon, MoveVertical, Maximize, Shield, MapPin, Target, Crosshair } from 'lucide-react';
 import { db, isConfigured } from '../firebaseConfig';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
@@ -44,6 +43,7 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ teachers, onA
 
     // School Settings State (Local)
     const [schoolForm, setSchoolForm] = useState<Partial<School>>({});
+    const [isGettingLocation, setIsGettingLocation] = useState(false);
 
     // Load Config on Mount
     useEffect(() => {
@@ -180,6 +180,33 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ teachers, onA
             onUpdateSchool({ ...currentSchool, ...schoolForm });
             alert('บันทึกข้อมูลโรงเรียนเรียบร้อยแล้ว');
         }
+    };
+
+    const handleGetCurrentLocation = () => {
+        setIsGettingLocation(true);
+        if (!navigator.geolocation) {
+            alert('Browser ของคุณไม่รองรับ Geolocation');
+            setIsGettingLocation(false);
+            return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                setSchoolForm({
+                    ...schoolForm,
+                    lat: position.coords.latitude,
+                    lng: position.coords.longitude
+                });
+                setIsGettingLocation(false);
+                alert(`ดึงพิกัดสำเร็จ: ${position.coords.latitude}, ${position.coords.longitude}`);
+            },
+            (error) => {
+                console.error(error);
+                alert('ไม่สามารถดึงพิกัดได้ กรุณาเปิด GPS และอนุญาตการเข้าถึง');
+                setIsGettingLocation(false);
+            },
+            { enableHighAccuracy: true }
+        );
     };
 
     const handleSaveConfig = async () => {
@@ -406,26 +433,38 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ teachers, onA
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 mb-1">ละติจูด (Latitude)</label>
-                                <input 
-                                    type="number" 
-                                    step="0.000001"
-                                    value={schoolForm.lat || ''}
-                                    onChange={e => setSchoolForm({...schoolForm, lat: parseFloat(e.target.value)})}
-                                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                                />
+                        <div>
+                            <div className="flex justify-between items-center mb-1">
+                                <label className="block text-sm font-medium text-slate-700">พิกัดโรงเรียน (Lat, Lng)</label>
+                                <button 
+                                    onClick={handleGetCurrentLocation}
+                                    disabled={isGettingLocation}
+                                    className="text-xs bg-blue-50 text-blue-600 px-2 py-1 rounded border border-blue-200 hover:bg-blue-100 flex items-center gap-1"
+                                >
+                                    {isGettingLocation ? 'กำลังค้นหา...' : <><Crosshair size={12}/> ดึงพิกัดปัจจุบัน</>}
+                                </button>
                             </div>
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 mb-1">ลองจิจูด (Longitude)</label>
-                                <input 
-                                    type="number" 
-                                    step="0.000001"
-                                    value={schoolForm.lng || ''}
-                                    onChange={e => setSchoolForm({...schoolForm, lng: parseFloat(e.target.value)})}
-                                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                                />
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs text-slate-500 mb-1">ละติจูด (Latitude)</label>
+                                    <input 
+                                        type="number" 
+                                        step="0.000001"
+                                        value={schoolForm.lat || ''}
+                                        onChange={e => setSchoolForm({...schoolForm, lat: parseFloat(e.target.value)})}
+                                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-slate-500 mb-1">ลองจิจูด (Longitude)</label>
+                                    <input 
+                                        type="number" 
+                                        step="0.000001"
+                                        value={schoolForm.lng || ''}
+                                        onChange={e => setSchoolForm({...schoolForm, lng: parseFloat(e.target.value)})}
+                                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                                    />
+                                </div>
                             </div>
                         </div>
 

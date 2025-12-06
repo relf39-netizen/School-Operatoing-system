@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { DEFAULT_LOCATION, MOCK_ATTENDANCE_HISTORY } from '../constants';
 import { AttendanceRecord, Teacher, School } from '../types';
-import { MapPin, Navigation, CheckCircle, LogOut, History, Printer, ArrowLeft, Database, ServerOff, Loader } from 'lucide-react';
+import { MapPin, Navigation, CheckCircle, LogOut, History, Printer, ArrowLeft, Database, ServerOff, Loader, RefreshCw, AlertTriangle } from 'lucide-react';
 import { db, isConfigured } from '../firebaseConfig';
 import { collection, addDoc, onSnapshot, query, orderBy, where, getDocs, updateDoc, doc, limit } from 'firebase/firestore';
 
@@ -35,8 +35,8 @@ const AttendanceSystem: React.FC<AttendanceSystemProps> = ({ currentUser, allTea
     // GPS State
     const [currentPos, setCurrentPos] = useState<{lat: number, lng: number} | null>(null);
     const [distance, setDistance] = useState<number | null>(null);
-    const [error, setError] = useState<string | null>(null);
-    const [loadingGPS, setLoadingGPS] = useState(false);
+    const [gpsError, setGpsError] = useState<string | null>(null);
+    const [isCheckingLocation, setIsCheckingLocation] = useState(false);
     
     // School Location Logic
     const schoolLat = currentSchool.lat || DEFAULT_LOCATION.lat;
@@ -47,6 +47,7 @@ const AttendanceSystem: React.FC<AttendanceSystemProps> = ({ currentUser, allTea
     const [status, setStatus] = useState<'None' | 'CheckedIn' | 'CheckedOut'>('None');
     const [timeIn, setTimeIn] = useState<string | null>(null);
     const [timeOut, setTimeOut] = useState<string | null>(null);
+    const [isProcessing, setIsProcessing] = useState(false);
 
     // Data State
     const [history, setHistory] = useState<AttendanceRecord[]>([]);
@@ -72,7 +73,6 @@ const AttendanceSystem: React.FC<AttendanceSystemProps> = ({ currentUser, allTea
             }, 3000);
 
             // Real Mode: Listen to attendance collection
-            // Note: For production, you might want to limit this query to recent records
             const q = query(collection(db, "attendance"), orderBy("date", "desc"), limit(100));
             unsubscribe = onSnapshot(q, (snapshot) => {
                 clearTimeout(timeoutId);
@@ -122,86 +122,70 @@ const AttendanceSystem: React.FC<AttendanceSystemProps> = ({ currentUser, allTea
     }, [currentUser.id]);
 
 
-    // --- GPS Logic ---
-    const refreshLocation = () => {
-        setLoadingGPS(true);
-        setError(null);
-        
-        if (!navigator.geolocation) {
-            setError('Browser does not support geolocation');
-            setLoadingGPS(false);
-            return;
-        }
-
-        navigator.geolocation.getCurrentPosition(
-            (position) => {
-                const lat = position.coords.latitude;
-                const lng = position.coords.longitude;
-                setCurrentPos({ lat, lng });
-                
-                // Calculate distance using School's settings
-                const dist = calculateDistance(lat, lng, schoolLat, schoolLng);
-                setDistance(dist);
-                setLoadingGPS(false);
-            },
-            (err) => {
-                setError('ไม่สามารถระบุตำแหน่งได้ กรุณาเปิด GPS');
-                setLoadingGPS(false);
-            }
-        );
-    };
-
+    // --- GPS Logic (Initial passive check) ---
     useEffect(() => {
-        refreshLocation();
+        // Initial quick check (low accuracy is fine for UI update)
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    const lat = position.coords.latitude;
+                    const lng = position.coords.longitude;
+                    setCurrentPos({ lat, lng });
+                    const dist = calculateDistance(lat, lng, schoolLat, schoolLng);
+                    setDistance(dist);
+                },
+                (err) => console.warn("Initial GPS check failed", err),
+                { enableHighAccuracy: false, timeout: 5000 }
+            );
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const handleAction = async (type: 'In' | 'Out') => {
-        if (!distance || distance > allowedRadius) {
-            alert('คุณอยู่นอกพื้นที่โรงเรียน ไม่สามารถลงเวลาได้');
-            return;
-        }
-
-        const now = new Date();
-        const timeString = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
-        const dateString = now.toISOString().split('T')[0];
-        
-        // --- OFFLINE/MOCK FALLBACK ---
-        const performMockAction = () => {
-            if (type === 'In') {
-                setStatus('CheckedIn');
-                setTimeIn(timeString);
-                const newRecord: AttendanceRecord = {
-                    id: `new_${Date.now()}`,
-                    teacherId: currentUser.id,
-                    teacherName: currentUser.name,
-                    date: dateString,
-                    checkInTime: timeString,
-                    checkOutTime: null,
-                    status: 'OnTime'
-                };
-                setHistory([newRecord, ...history]);
-                alert(`บันทึกเวลามาปฏิบัติงานสำเร็จ (Offline): ${timeString}`);
-            } else {
-                setStatus('CheckedOut');
-                setTimeOut(timeString);
-                const updated = history.map(h => {
-                    if (h.date === dateString && h.teacherId === currentUser.id) {
-                        return { ...h, checkOutTime: timeString };
-                    }
-                    return h;
-                });
-                setHistory(updated);
-                alert(`บันทึกเวลากลับสำเร็จ (Offline): ${timeString}`);
+    // Helper: Promisified Geolocation (High Accuracy)
+    const getCurrentPosition = (): Promise<GeolocationPosition> => {
+        return new Promise((resolve, reject) => {
+            if (!navigator.geolocation) {
+                reject(new Error("Browser does not support geolocation"));
+                return;
             }
-        };
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+                enableHighAccuracy: true, // IMPORTANT: Force GPS on mobile
+                timeout: 10000,
+                maximumAge: 0 // Do not use cached position
+            });
+        });
+    };
 
-        // --- ONLINE FIREBASE ACTION ---
-        if (isConfigured && db) {
-            try {
+    const handleAction = async (type: 'In' | 'Out') => {
+        setIsProcessing(true);
+        setIsCheckingLocation(true);
+        setGpsError(null);
+
+        try {
+            // 1. Force get current GPS location
+            const position = await getCurrentPosition();
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+            
+            // Update state for UI
+            setCurrentPos({ lat, lng });
+            const dist = calculateDistance(lat, lng, schoolLat, schoolLng);
+            setDistance(dist);
+
+            // 2. Validate Distance
+            if (dist > allowedRadius) {
+                throw new Error(`คุณอยู่นอกพื้นที่โรงเรียน (${dist.toFixed(0)} เมตร) กรุณาขยับเข้าใกล้จุดเช็คอิน`);
+            }
+
+            // 3. Process Check-In/Out
+            const now = new Date();
+            const timeString = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+            const dateString = now.toISOString().split('T')[0];
+
+            if (isConfigured && db) {
+                // ONLINE MODE
                 if (type === 'In') {
-                    // Check duplicate check-in
-                    if (status !== 'None') return;
+                    if (status !== 'None') return; // Double check
 
                     const newRecord = {
                         teacherId: currentUser.id,
@@ -209,13 +193,12 @@ const AttendanceSystem: React.FC<AttendanceSystemProps> = ({ currentUser, allTea
                         date: dateString,
                         checkInTime: timeString,
                         checkOutTime: null,
-                        status: 'OnTime', // Logic to check 'Late' could be added here comparing with 08:30
-                        coordinate: currentPos
+                        status: 'OnTime', 
+                        coordinate: { lat, lng } // Save GPS data
                     };
                     await addDoc(collection(db, "attendance"), newRecord);
-                    alert(`บันทึกเวลามาปฏิบัติงานสำเร็จ: ${timeString}`);
+                    alert(`ลงเวลามาสำเร็จ: ${timeString}`);
                 } else {
-                    // Check-out: Update existing document
                     const q = query(
                         collection(db, "attendance"), 
                         where("teacherId", "==", currentUser.id),
@@ -226,19 +209,49 @@ const AttendanceSystem: React.FC<AttendanceSystemProps> = ({ currentUser, allTea
                     if (!querySnapshot.empty) {
                         const docRef = doc(db, "attendance", querySnapshot.docs[0].id);
                         await updateDoc(docRef, {
-                            checkOutTime: timeString
+                            checkOutTime: timeString,
+                            checkOutCoordinate: { lat, lng } // Save Out GPS data (optional schema update)
                         });
-                        alert(`บันทึกเวลากลับสำเร็จ: ${timeString}`);
+                        alert(`ลงเวลากลับสำเร็จ: ${timeString}`);
                     } else {
-                        alert("ไม่พบข้อมูลการลงเวลามา (กรุณาติดต่อผู้ดูแลระบบ)");
+                        throw new Error("ไม่พบข้อมูลการลงเวลามา (กรุณาติดต่อ Admin)");
                     }
                 }
-            } catch (e) {
-                console.error("Firebase Error:", e);
-                performMockAction();
+            } else {
+                // OFFLINE MOCK MODE
+                if (type === 'In') {
+                    setStatus('CheckedIn');
+                    setTimeIn(timeString);
+                    setHistory([{
+                        id: `new_${Date.now()}`,
+                        teacherId: currentUser.id,
+                        teacherName: currentUser.name,
+                        date: dateString,
+                        checkInTime: timeString,
+                        checkOutTime: null,
+                        status: 'OnTime',
+                        coordinate: { lat, lng }
+                    }, ...history]);
+                    alert(`(Offline) ลงเวลามาสำเร็จ: ${timeString}`);
+                } else {
+                    setStatus('CheckedOut');
+                    setTimeOut(timeString);
+                    setHistory(history.map(h => 
+                        h.date === dateString && h.teacherId === currentUser.id 
+                            ? { ...h, checkOutTime: timeString } 
+                            : h
+                    ));
+                    alert(`(Offline) ลงเวลากลับสำเร็จ: ${timeString}`);
+                }
             }
-        } else {
-            performMockAction();
+
+        } catch (err: any) {
+            console.error(err);
+            setGpsError(err.message || "ไม่สามารถระบุตำแหน่งได้");
+            alert(err.message || "เกิดข้อผิดพลาดในการระบุตำแหน่ง GPS");
+        } finally {
+            setIsProcessing(false);
+            setIsCheckingLocation(false);
         }
     };
 
@@ -266,57 +279,81 @@ const AttendanceSystem: React.FC<AttendanceSystemProps> = ({ currentUser, allTea
         <div className="max-w-4xl mx-auto space-y-6">
             {/* Control Panel (GPS & Buttons) */}
             <div className="bg-white p-6 rounded-2xl shadow-lg border border-slate-100 relative overflow-hidden">
-                <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-orange-400 to-red-500"></div>
+                <div className={`absolute top-0 left-0 w-full h-2 bg-gradient-to-r ${isWithinRange ? 'from-green-400 to-emerald-500' : 'from-orange-400 to-red-500'}`}></div>
                 
                 <div className="flex flex-col md:flex-row gap-8 items-center justify-between">
                     {/* Location Status */}
-                    <div className="flex flex-col items-center flex-1">
-                        <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-2 transition-colors duration-500 ${
-                            loadingGPS ? 'bg-slate-100 text-slate-400 animate-pulse' :
-                            error ? 'bg-red-100 text-red-500' :
-                            isWithinRange ? 'bg-green-100 text-green-600 shadow-green-200 shadow-lg' :
-                            'bg-orange-100 text-orange-500'
+                    <div className="flex flex-col items-center flex-1 text-center">
+                        <div className={`w-20 h-20 rounded-full flex items-center justify-center mb-3 transition-colors duration-500 border-4 ${
+                            isCheckingLocation ? 'bg-blue-50 border-blue-100 animate-pulse' :
+                            gpsError ? 'bg-red-50 border-red-100 text-red-500' :
+                            isWithinRange ? 'bg-green-50 border-green-100 text-green-600 shadow-lg' :
+                            'bg-orange-50 border-orange-100 text-orange-500'
                         }`}>
-                            {loadingGPS ? <Navigation className="animate-spin" size={24} /> : 
-                             isWithinRange ? <MapPin size={32} /> : <MapPin size={32} />
+                            {isCheckingLocation ? <RefreshCw className="animate-spin text-blue-500" size={32} /> : 
+                             gpsError ? <AlertTriangle size={32}/> :
+                             <MapPin size={36} className={isWithinRange ? 'animate-bounce' : ''} />
                             }
                         </div>
-                        <h3 className="font-bold text-slate-700">
-                            {isWithinRange ? 'อยู่ในพื้นที่โรงเรียน' : 'อยู่นอกพื้นที่โรงเรียน'}
+                        
+                        <h3 className={`font-bold text-lg ${isWithinRange ? 'text-green-700' : 'text-slate-700'}`}>
+                            {isCheckingLocation ? 'กำลังระบุพิกัด...' : 
+                             gpsError ? 'เกิดข้อผิดพลาด GPS' :
+                             isWithinRange ? 'อยู่ในพื้นที่โรงเรียน' : 'อยู่นอกพื้นที่โรงเรียน'}
                         </h3>
-                        <p className="text-xs text-slate-500 text-center">
-                            {distance ? `ห่างจากจุดเช็คอิน ${distance.toFixed(0)} ม. (รัศมี ${allowedRadius} ม.)` : 'กำลังระบุตำแหน่ง...'}
-                        </p>
-                        <p className="text-[10px] text-slate-400 text-center mt-1">พิกัดเป้าหมาย: {schoolLat.toFixed(4)}, {schoolLng.toFixed(4)}</p>
-                         <button onClick={refreshLocation} className="mt-2 text-xs text-blue-600 underline">อัปเดตตำแหน่ง</button>
+                        
+                        {!isCheckingLocation && !gpsError && (
+                            <div className="space-y-1">
+                                <p className="text-sm text-slate-500">
+                                    {distance ? `ระยะห่าง ${distance.toFixed(0)} ม. (รัศมี ${allowedRadius} ม.)` : 'รอการตรวจสอบตำแหน่ง'}
+                                </p>
+                                <p className="text-[10px] text-slate-400">
+                                    พิกัดของคุณ: {currentPos ? `${currentPos.lat.toFixed(6)}, ${currentPos.lng.toFixed(6)}` : '-'}
+                                </p>
+                            </div>
+                        )}
+                        
+                        {gpsError && (
+                            <p className="text-xs text-red-500 mt-1 max-w-xs">{gpsError}</p>
+                        )}
                     </div>
 
                     {/* Action Buttons */}
-                    <div className="flex gap-4 flex-1 w-full md:w-auto">
-                        <button 
-                            disabled={!isWithinRange || status !== 'None'}
-                            onClick={() => handleAction('In')}
-                            className={`flex-1 flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all ${
-                                status === 'CheckedIn' || status === 'CheckedOut' ? 'bg-slate-50 opacity-50' : 
-                                isWithinRange ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100' : 'bg-slate-50 text-slate-400'
-                            }`}
-                        >
-                            <CheckCircle size={28} className="mb-1" />
-                            <span className="font-bold">ลงเวลามา</span>
-                            {timeIn && <span className="text-xs bg-white px-2 rounded border mt-1">{timeIn}</span>}
-                        </button>
-                        <button 
-                            disabled={!isWithinRange || status !== 'CheckedIn'}
-                            onClick={() => handleAction('Out')}
-                            className={`flex-1 flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all ${
-                                status === 'CheckedOut' ? 'bg-slate-50 opacity-50' : 
-                                (isWithinRange && status === 'CheckedIn') ? 'bg-orange-50 border-orange-200 text-orange-700 hover:bg-orange-100' : 'bg-slate-50 text-slate-400'
-                            }`}
-                        >
-                            <LogOut size={28} className="mb-1" />
-                            <span className="font-bold">ลงเวลากลับ</span>
-                            {timeOut && <span className="text-xs bg-white px-2 rounded border mt-1">{timeOut}</span>}
-                        </button>
+                    <div className="flex flex-col gap-3 flex-1 w-full md:w-auto">
+                        <div className="bg-blue-50 p-3 rounded-lg border border-blue-100 text-xs text-blue-700 mb-2 flex items-start gap-2">
+                             <Navigation size={16} className="shrink-0 mt-0.5"/>
+                             <p>ระบบจะดึงพิกัด GPS อัตโนมัติเมื่อกดปุ่มลงเวลา กรุณาเปิด GPS บนโทรศัพท์ของท่าน</p>
+                        </div>
+
+                        <div className="flex gap-4">
+                            <button 
+                                disabled={status !== 'None' || isProcessing}
+                                onClick={() => handleAction('In')}
+                                className={`flex-1 flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all relative overflow-hidden ${
+                                    status === 'CheckedIn' || status === 'CheckedOut' ? 'bg-slate-50 opacity-50 cursor-not-allowed' : 
+                                    'bg-green-50 border-green-200 text-green-700 hover:bg-green-100 hover:shadow-md'
+                                }`}
+                            >
+                                {isProcessing && status === 'None' && <div className="absolute inset-0 bg-white/50 flex items-center justify-center"><Loader className="animate-spin"/></div>}
+                                <CheckCircle size={28} className="mb-1" />
+                                <span className="font-bold">ลงเวลามา</span>
+                                {timeIn && <span className="text-xs bg-white px-2 rounded border mt-1 border-green-200 text-green-800 font-mono">{timeIn}</span>}
+                            </button>
+
+                            <button 
+                                disabled={status !== 'CheckedIn' || isProcessing}
+                                onClick={() => handleAction('Out')}
+                                className={`flex-1 flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all relative overflow-hidden ${
+                                    status === 'CheckedOut' || status === 'None' ? 'bg-slate-50 opacity-50 cursor-not-allowed' : 
+                                    'bg-orange-50 border-orange-200 text-orange-700 hover:bg-orange-100 hover:shadow-md'
+                                }`}
+                            >
+                                {isProcessing && status === 'CheckedIn' && <div className="absolute inset-0 bg-white/50 flex items-center justify-center"><Loader className="animate-spin"/></div>}
+                                <LogOut size={28} className="mb-1" />
+                                <span className="font-bold">ลงเวลากลับ</span>
+                                {timeOut && <span className="text-xs bg-white px-2 rounded border mt-1 border-orange-200 text-orange-800 font-mono">{timeOut}</span>}
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -357,7 +394,19 @@ const AttendanceSystem: React.FC<AttendanceSystemProps> = ({ currentUser, allTea
                                         {record.date} 
                                         {isAdminView && <div className="text-xs text-slate-400">{record.teacherName}</div>}
                                     </td>
-                                    <td className="px-6 py-3 text-green-700 font-mono">{record.checkInTime}</td>
+                                    <td className="px-6 py-3 text-green-700 font-mono">
+                                        {record.checkInTime}
+                                        {record.coordinate && isAdminView && (
+                                            <a 
+                                                href={`https://www.google.com/maps?q=${record.coordinate.lat},${record.coordinate.lng}`} 
+                                                target="_blank" 
+                                                rel="noreferrer"
+                                                className="ml-2 text-[10px] text-blue-500 underline"
+                                            >
+                                                GPS
+                                            </a>
+                                        )}
+                                    </td>
                                     <td className="px-6 py-3 text-orange-700 font-mono">{getDisplayCheckOut(record)}</td>
                                     <td className="px-6 py-3 text-center">
                                         <span className={`px-2 py-1 rounded-full text-xs ${
