@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 // Sidebar is removed
 import DocumentsSystem from './components/DocumentsSystem';
@@ -43,7 +42,7 @@ const App: React.FC = () => {
     useEffect(() => {
         let unsubSchools: (() => void) | undefined;
         let unsubTeachers: (() => void) | undefined;
-        let timeoutId: NodeJS.Timeout | undefined;
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
         if (isConfigured && db) {
             // SAFETY: Set a timeout to fallback to Mocks if Firestore is unreachable/slow (e.g. 3 seconds)
@@ -210,7 +209,7 @@ const App: React.FC = () => {
             ...currentUser, 
             password: newPass, 
             position: position, 
-            isFirstLogin: false,
+            isFirstLogin: false, 
             roles: position.includes('ผู้อำนวยการ') ? (['DIRECTOR', 'TEACHER'] as TeacherRole[]) : currentUser.roles
         };
 

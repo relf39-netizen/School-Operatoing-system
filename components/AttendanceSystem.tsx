@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { DEFAULT_LOCATION, MOCK_ATTENDANCE_HISTORY, MOCK_LEAVE_REQUESTS } from '../constants';
 import { AttendanceRecord, Teacher, School, LeaveRequest } from '../types';
@@ -75,7 +74,7 @@ const AttendanceSystem: React.FC<AttendanceSystemProps> = ({ currentUser, allTea
     useEffect(() => {
         let unsubscribeAtt: () => void;
         let unsubscribeLeaves: () => void;
-        let timeoutId: NodeJS.Timeout;
+        let timeoutId: ReturnType<typeof setTimeout>;
 
         if (isConfigured && db) {
              // SAFETY TIMEOUT: Fallback if Firestore takes too long (3s)

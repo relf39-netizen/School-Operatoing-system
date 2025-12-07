@@ -1,8 +1,3 @@
-
-
-
-
-
 import React, { useState, useEffect } from 'react';
 import { Transaction, FinanceAccount, Teacher, FinanceAuditLog } from '../types';
 import { MOCK_TRANSACTIONS, MOCK_ACCOUNTS } from '../constants';
@@ -62,7 +57,7 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser }) => {
         let unsubAccounts: () => void;
         let unsubTrans: () => void;
         let unsubLogs: () => void;
-        let timeoutId: NodeJS.Timeout;
+        let timeoutId: ReturnType<typeof setTimeout>;
 
         if (isConfigured && db) {
             // SAFETY TIMEOUT: Fallback if Firestore takes too long (3s)

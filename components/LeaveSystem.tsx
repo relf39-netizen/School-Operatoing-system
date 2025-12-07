@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { LeaveRequest, Teacher, School, SystemConfig } from '../types';
 import { Clock, CheckCircle, XCircle, FilePlus, AlertTriangle, FileText, Download, UserCheck, Printer, ArrowLeft, Loader, Database, ServerOff, UploadCloud, Link as LinkIcon, Paperclip, Eye, Phone } from 'lucide-react';
@@ -59,7 +58,7 @@ const LeaveSystem: React.FC<LeaveSystemProps> = ({ currentUser, allTeachers, cur
     // --- Data Connection (Hybrid) ---
     useEffect(() => {
         let unsubscribe: () => void;
-        let timeoutId: NodeJS.Timeout;
+        let timeoutId: ReturnType<typeof setTimeout>;
 
         if (isConfigured && db) {
             // SAFETY TIMEOUT: Fallback if Firestore takes too long (3s)

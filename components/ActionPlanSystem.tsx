@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect } from 'react';
 import { PlanDepartment, Project, Teacher, ProjectStatus } from '../types';
 import { MOCK_PLAN_DATA } from '../constants';
@@ -30,7 +28,7 @@ const ActionPlanSystem: React.FC<ActionPlanSystemProps> = ({ currentUser }) => {
     // --- Data Synchronization ---
     useEffect(() => {
         let unsubscribe: () => void;
-        let timeoutId: NodeJS.Timeout;
+        let timeoutId: ReturnType<typeof setTimeout>;
 
         if (isConfigured && db) {
             // SAFETY TIMEOUT: Fallback if Firestore takes too long (3s)
