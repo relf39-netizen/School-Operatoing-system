@@ -201,6 +201,9 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                 // Visual Highlight Effect
                 setIsHighlighted(true);
                 setTimeout(() => setIsHighlighted(false), 2500);
+                
+                // Auto scroll to top
+                window.scrollTo({ top: 0, behavior: 'smooth' });
 
                 if (onClearFocus) onClearFocus();
             }

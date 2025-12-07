@@ -137,10 +137,24 @@ const App: React.FC = () => {
         requestNotificationPermission();
     }, []);
 
-    const sendSystemNotification = (title: string, body: string) => {
+    const sendSystemNotification = (title: string, body: string, linkTo?: SystemView, linkId?: string) => {
         // 1. Browser Notification
         if ('Notification' in window && Notification.permission === 'granted') {
-            new Notification(title, { body, icon: '/vite.svg' });
+            const notif = new Notification(title, { body, icon: '/vite.svg' });
+            
+            // Handle click on the system notification
+            if (linkTo) {
+                notif.onclick = (e) => {
+                    e.preventDefault();
+                    window.focus();
+                    setCurrentView(linkTo);
+                    if (linkId) {
+                        setFocusItem({ view: linkTo, id: linkId });
+                    }
+                    setNotification(null); // Clear toast
+                    notif.close();
+                };
+            }
         }
         // 2. Sound
         try {
@@ -180,14 +194,16 @@ const App: React.FC = () => {
                             const data = change.doc.data();
                             const teacherName = data.teacherName || 'บุคลากร';
                             const msg = `มีรายการลาใหม่จาก: ${teacherName} รอการอนุมัติ`;
-                            
+                            const leaveId = change.doc.id;
+
                             setNotification({
                                 message: msg,
                                 type: 'info',
                                 linkTo: SystemView.LEAVE,
-                                linkId: change.doc.id
+                                linkId: leaveId
                             });
-                            sendSystemNotification('อนุมัติการลา', msg);
+                            // Trigger system notification with link
+                            sendSystemNotification('อนุมัติการลา', msg, SystemView.LEAVE, leaveId);
                         }
                     });
                 }
@@ -235,7 +251,7 @@ const App: React.FC = () => {
                             linkTo: SystemView.DOCUMENTS,
                             linkId: docId
                         });
-                        sendSystemNotification('งานสารบรรณ', msg);
+                        sendSystemNotification('งานสารบรรณ', msg, SystemView.DOCUMENTS, docId);
                     }
 
                     // 2. Notify Teachers for Distributed Documents
@@ -252,7 +268,7 @@ const App: React.FC = () => {
                                 linkTo: SystemView.DOCUMENTS,
                                 linkId: docId
                             });
-                            sendSystemNotification('หนังสือสั่งการ', msg);
+                            sendSystemNotification('หนังสือสั่งการ', msg, SystemView.DOCUMENTS, docId);
                         }
                     }
                 });

@@ -1,4 +1,4 @@
-import { initializeApp } from "firebase/app";
+import * as firebaseApp from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import { getStorage } from "firebase/storage";
@@ -19,7 +19,6 @@ const firebaseConfig = {
 };
 
 // Check if configured (Logic: if apiKey contains default placeholder, it's not configured)
-// Since we have the real key now, this should be true.
 export const isConfigured = firebaseConfig.apiKey !== "YOUR_API_KEY_HERE";
 
 let app;
@@ -29,7 +28,8 @@ let storage: any = null;
 
 if (isConfigured) {
     try {
-        app = initializeApp(firebaseConfig);
+        // Use namespace import for initializeApp
+        app = firebaseApp.initializeApp(firebaseConfig);
         db = getFirestore(app);
         auth = getAuth(app);
         storage = getStorage(app);

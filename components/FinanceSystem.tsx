@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Transaction, FinanceAccount, Teacher, FinanceAuditLog, SystemConfig } from '../types';
 import { MOCK_TRANSACTIONS, MOCK_ACCOUNTS } from '../constants';
@@ -12,6 +11,17 @@ const getThaiDate = (dateStr: string) => {
     if (!dateStr) return '';
     const date = new Date(dateStr);
     return date.toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' });
+};
+
+// Short Date for Table (e.g. 7 ธ.ค. 68)
+const getThaiDateShort = (dateStr: string) => {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    const day = date.getDate();
+    const months = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+    const month = months[date.getMonth()];
+    const year = (date.getFullYear() + 543).toString().slice(-2); // 68
+    return `${day} ${month} ${year}`;
 };
 
 const getThaiMonthYear = (dateStr: string) => {
@@ -737,6 +747,16 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser }) => {
     // --- RENDER PRINT VIEW (MEMO STYLE) ---
     const renderPrintView = () => (
         <div className="animate-fade-in pb-10">
+            {/* Inject print-specific styles for repeating headers and page breaks */}
+            <style>{`
+                @media print {
+                    thead { display: table-header-group; }
+                    tfoot { display: table-footer-group; }
+                    tr { page-break-inside: avoid; }
+                    .director-box { page-break-inside: avoid; break-inside: avoid; }
+                }
+            `}</style>
+
             {/* Toolbar */}
             <div className="bg-white p-4 shadow-sm mb-6 print:hidden">
                 <div className="max-w-4xl mx-auto flex justify-between items-center gap-4">
@@ -752,10 +772,10 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser }) => {
                 </div>
             </div>
 
-            {/* A4 Paper */}
-            <div className="bg-white shadow-lg p-10 mx-auto max-w-[800px] min-h-[1000px] font-sarabun text-black leading-relaxed print:shadow-none print:border-none print:p-0 print:w-full">
+            {/* A4 Paper - Width fixed to A4 (210mm) for preview consistency, and added padding for print margins */}
+            <div className="bg-white shadow-lg p-10 mx-auto max-w-[210mm] min-h-[297mm] font-sarabun text-black leading-relaxed print:shadow-none print:border-none print:p-6 print:w-full print:max-w-none box-border">
                 {/* Header: Garuda & Memo */}
-                <div className="flex flex-col items-center mb-6">
+                <div className="flex flex-col items-center mb-4">
                      <img 
                         src="https://upload.wikimedia.org/wikipedia/commons/thumb/8/8f/Emblem_of_the_Ministry_of_Education_of_Thailand.svg/1200px-Emblem_of_the_Ministry_of_Education_of_Thailand.svg.png" 
                         alt="Garuda" 
@@ -764,23 +784,30 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser }) => {
                     <h2 className="text-xl font-bold">บันทึกข้อความ</h2>
                 </div>
 
-                <div className="flex gap-2 mb-2">
-                    <span className="font-bold w-20">ส่วนราชการ</span>
-                    <span className="border-b border-dotted border-black flex-1">{sysConfig?.schoolName || 'โรงเรียน.......................................................'}</span>
+                {/* Header Alignment Fix: Use whitespace-nowrap and remove fixed widths */}
+                <div className="flex gap-2 mb-2 items-end">
+                    <span className="font-bold whitespace-nowrap">ส่วนราชการ</span>
+                    <span className="border-b border-dotted border-black flex-1 ml-2">{sysConfig?.schoolName || 'โรงเรียน.......................................................'}</span>
                 </div>
+                
                 <div className="flex gap-8 mb-2">
-                     <div className="flex gap-2 flex-1">
-                        <span className="font-bold w-10">ที่</span>
-                        <span className="border-b border-dotted border-black flex-1">........................................</span>
+                     <div className="flex gap-2 flex-1 items-end">
+                        <span className="font-bold whitespace-nowrap">ที่</span>
+                        <div className="border-b border-dotted border-black flex-1 text-center relative">
+                            {/* Dash centered on dotted line */}
+                            <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 font-bold">-</span>
+                            &nbsp;
+                        </div>
                      </div>
-                     <div className="flex gap-2 flex-1">
-                        <span className="font-bold w-10">วันที่</span>
-                        <span className="border-b border-dotted border-black flex-1">{getThaiDate(new Date().toISOString())}</span>
+                     <div className="flex gap-2 flex-1 items-end">
+                        <span className="font-bold whitespace-nowrap">วันที่</span>
+                        <span className="border-b border-dotted border-black flex-1 text-center">{getThaiDate(new Date().toISOString())}</span>
                      </div>
                 </div>
-                <div className="flex gap-2 mb-6">
-                    <span className="font-bold w-20">เรื่อง</span>
-                    <span className="border-b border-dotted border-black flex-1">
+                
+                <div className="flex gap-2 mb-6 items-end">
+                    <span className="font-bold whitespace-nowrap">เรื่อง</span>
+                    <span className="border-b border-dotted border-black flex-1 ml-2">
                         รายงานการรับ-จ่ายเงิน {activeTab === 'Budget' ? 'งบประมาณ' : 'นอกงบประมาณ'}
                         {selectedAccount ? ` (${selectedAccount.name})` : ''} ประจำเดือน {getThaiMonthYear(new Date().toISOString())}
                     </span>
@@ -801,8 +828,9 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser }) => {
                     <thead>
                         <tr className="bg-slate-100">
                             <th className="border border-black p-2 text-center w-12">ที่</th>
-                            <th className="border border-black p-2 text-center w-24">ว/ด/ป</th>
-                            <th className="border border-black p-2 text-left">รายการ</th>
+                            {/* Widened Date Column */}
+                            <th className="border border-black p-2 text-center w-28">ว/ด/ป</th>
+                            <th className="border border-black p-2 text-left w-auto">รายการ</th>
                             <th className="border border-black p-2 text-right w-24">รายรับ</th>
                             <th className="border border-black p-2 text-right w-24">รายจ่าย</th>
                         </tr>
@@ -816,7 +844,8 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser }) => {
                             .map((t, index) => (
                                 <tr key={t.id}>
                                     <td className="border border-black p-2 text-center">{index + 1}</td>
-                                    <td className="border border-black p-2 text-center">{getThaiDate(t.date)}</td>
+                                    {/* Use Short Date (e.g. 7 ธ.ค. 68) to prevent wrapping */}
+                                    <td className="border border-black p-2 text-center whitespace-nowrap">{getThaiDateShort(t.date)}</td>
                                     <td className="border border-black p-2">{t.description}</td>
                                     <td className="border border-black p-2 text-right">
                                         {t.type === 'Income' ? t.amount.toLocaleString() : '-'}
@@ -848,7 +877,7 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser }) => {
                 </div>
 
                 {/* Signature Section 1: Officer */}
-                <div className="flex justify-end mb-10">
+                <div className="flex justify-end mb-8 page-break-inside-avoid">
                     <div className="text-center w-64">
                          <p className="mb-4">ขอแสดงความนับถือ</p>
                          
@@ -868,9 +897,10 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser }) => {
                 </div>
 
                 {/* Signature Section 2: Director Box */}
-                <div className="border border-black p-4 rounded-sm flex flex-col items-center justify-center mx-auto w-3/4">
+                {/* Added 'director-box' class for break-inside-avoid logic */}
+                <div className="director-box border border-black p-4 rounded-sm flex flex-col items-center justify-center mx-auto w-3/4">
                     <p className="font-bold mb-4 underline">คำสั่ง / ข้อพิจารณา</p>
-                    <div className="flex gap-8 mb-6 w-full px-10">
+                    <div className="flex gap-8 mb-6 w-full px-10 justify-center">
                         <div className="flex items-center gap-2">
                              <div className="w-4 h-4 border border-black"></div> ทราบ
                         </div>
