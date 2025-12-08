@@ -1,9 +1,10 @@
+
 import React, { useState, useEffect } from 'react';
 import { DEFAULT_LOCATION, MOCK_ATTENDANCE_HISTORY, MOCK_LEAVE_REQUESTS } from '../constants';
 import { AttendanceRecord, Teacher, School, LeaveRequest } from '../types';
 import { MapPin, Navigation, CheckCircle, LogOut, History, Printer, ArrowLeft, Database, ServerOff, Loader, RefreshCw, AlertTriangle } from 'lucide-react';
 import { db, isConfigured } from '../firebaseConfig';
-import { collection, addDoc, onSnapshot, query, orderBy, where, getDocs, updateDoc, doc, limit } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, query, orderBy, where, getDocs, updateDoc, doc, limit, QuerySnapshot, DocumentData } from 'firebase/firestore';
 
 // Haversine formula to calculate distance in meters
 const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
@@ -89,7 +90,7 @@ const AttendanceSystem: React.FC<AttendanceSystemProps> = ({ currentUser, allTea
 
             // 1. Fetch Attendance
             const qAtt = query(collection(db, "attendance"), orderBy("date", "desc"), limit(200));
-            unsubscribeAtt = onSnapshot(qAtt, (snapshot) => {
+            unsubscribeAtt = onSnapshot(qAtt, (snapshot: QuerySnapshot<DocumentData>) => {
                 const fetched: AttendanceRecord[] = [];
                 snapshot.forEach((doc) => {
                     fetched.push({ id: doc.id, ...doc.data() } as AttendanceRecord);
@@ -119,7 +120,7 @@ const AttendanceSystem: React.FC<AttendanceSystemProps> = ({ currentUser, allTea
 
             // 2. Fetch Leaves (To check for Absent/Leave status)
             const qLeaves = query(collection(db, "leave_requests"), where("status", "==", "Approved"));
-            unsubscribeLeaves = onSnapshot(qLeaves, (snapshot) => {
+            unsubscribeLeaves = onSnapshot(qLeaves, (snapshot: QuerySnapshot<DocumentData>) => {
                 const fetchedLeaves: LeaveRequest[] = [];
                 snapshot.forEach((doc) => {
                     fetchedLeaves.push({ id: doc.id, ...doc.data() } as LeaveRequest);
@@ -341,6 +342,8 @@ const AttendanceSystem: React.FC<AttendanceSystemProps> = ({ currentUser, allTea
 
         return { status: 'None', checkIn: '-', checkOut: '-', note: '' };
     };
+
+    const getDirector = () => allTeachers.find(t => t.roles.includes('DIRECTOR'));
 
     if (isLoadingData) {
         return (
@@ -654,7 +657,13 @@ const AttendanceSystem: React.FC<AttendanceSystemProps> = ({ currentUser, allTea
                                 <p className="mb-8">ขอรับรองว่าข้าราชการครูและบุคลากรทางการศึกษาได้มาปฏิบัติราชการจริง</p>
                                 <div className="text-center relative mt-8">
                                     <div className="border-b border-black w-64 mb-2 border-dotted mx-auto"></div>
-                                    <p className="font-bold mb-1">( ผู้อำนวยการสถานศึกษา )</p>
+                                    {(() => {
+                                        const director = getDirector();
+                                        const directorName = director ? director.name : '...........................................................';
+                                        return (
+                                            <p className="font-bold mb-1">( {directorName} )</p>
+                                        );
+                                    })()}
                                     <p>ผู้อำนวยการ {currentSchool.name}</p>
                                     <p className="text-sm mt-1">ผู้ตรวจสอบ / ผู้รับรอง</p>
                                 </div>

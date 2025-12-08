@@ -2,9 +2,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { DocumentItem, Teacher, Attachment, SystemConfig } from '../types';
 import { MOCK_DOCUMENTS, CURRENT_SCHOOL_YEAR } from '../constants';
-import { Search, FileText, Users, PenTool, CheckCircle, FilePlus, Eye, CheckSquare, Loader, Link as LinkIcon, Download, Trash2, File as FileIcon, ExternalLink, Plus, UploadCloud, AlertTriangle, Monitor, FileCheck, ArrowLeft, Send, MousePointerClick, ChevronLeft, ChevronRight, Settings } from 'lucide-react';
+import { Search, FileText, Users, PenTool, CheckCircle, FilePlus, Eye, CheckSquare, Loader, Link as LinkIcon, Download, Trash2, File as FileIcon, ExternalLink, Plus, UploadCloud, AlertTriangle, Monitor, FileCheck, ArrowLeft, Send, MousePointerClick, ChevronLeft, ChevronRight, Settings, FileBadge, Megaphone, Save } from 'lucide-react';
 import { db, isConfigured } from '../firebaseConfig';
-import { collection, addDoc, onSnapshot, query, orderBy, updateDoc, where, doc, getDoc, deleteDoc } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, query, orderBy, updateDoc, where, doc, getDoc, deleteDoc, QuerySnapshot, DocumentData } from 'firebase/firestore';
 import { stampPdfDocument, stampReceiveNumber } from '../utils/pdfStamper';
 
 interface DocumentsSystemProps {
@@ -34,6 +34,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
     const [isHighlighted, setIsHighlighted] = useState(false);
 
     // Form State (Admin)
+    const [docCategory, setDocCategory] = useState<'INCOMING' | 'ORDER'>('INCOMING');
     const [newDoc, setNewDoc] = useState({ 
         bookNumber: '', // Added custom book number
         title: '', 
@@ -98,7 +99,9 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
             priority: 'Normal',
             description: ''
         });
+        setDocCategory('INCOMING'); // Default
         setTempAttachments([]);
+        setSelectedTeachers([]); // Clear previous selections
         setViewMode('CREATE');
     };
 
@@ -143,7 +146,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
             try {
                 // 1. Fetch Documents
                 const q = query(collection(db, "documents"), orderBy("id", "desc")); 
-                unsubscribe = onSnapshot(q, (snapshot) => {
+                unsubscribe = onSnapshot(q, (snapshot: QuerySnapshot<DocumentData>) => {
                     clearTimeout(timeoutId);
                     const fetched: DocumentItem[] = [];
                     snapshot.forEach((doc) => {
@@ -230,11 +233,12 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                 let base64Data = await fileToBase64(file);
                 
                 // ----------------------------------------------------
-                // AUTO STAMP RECEIVE NUMBER (Only First PDF File)
+                // AUTO STAMP RECEIVE NUMBER (Only First PDF File & ONLY for INCOMING)
                 // ----------------------------------------------------
                 const isFirstFile = tempAttachments.length === 0;
                 
-                if (file.type === 'application/pdf' && isFirstFile) {
+                // FIX: Only stamp if it is INCOMING category
+                if (file.type === 'application/pdf' && isFirstFile && docCategory === 'INCOMING') {
                     setUploadProgress('กำลังอัปโหลดไฟล์ไปที่ Google Drive และลงเลขที่รับ...');
                     
                     // Use the custom book number from state instead of auto-calc logic here
@@ -333,31 +337,47 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
         e.preventDefault();
         
         if (!newDoc.bookNumber) {
-            alert("กรุณาระบุเลขที่รับ");
+            alert("กรุณาระบุเลขที่รับ / เลขคำสั่ง");
             return;
         }
 
+        // Logic split for ORDER vs INCOMING
+        const isOrder = docCategory === 'ORDER';
+        
+        if (isOrder && selectedTeachers.length === 0) {
+            if(!confirm("ท่านยังไม่ได้เลือกผู้รับปฏิบัติ (สามารถเพิ่มภายหลังได้) ยืนยันที่จะบันทึกหรือไม่?")) return;
+        }
+
         setIsUploading(true);
-        setUploadProgress('กำลังส่งหนังสือไปหาผู้อำนวยการ...');
+        setUploadProgress(isOrder ? 'กำลังบันทึกและส่งคำสั่ง...' : 'กำลังส่งหนังสือไปหาผู้อำนวยการ...');
         
         const now = new Date();
         const docId = Date.now().toString();
 
         try {
-            const created: DocumentItem = {
+            // FIX: Construct object without undefined fields for Firestore
+            const created: any = {
                 id: docId,
+                schoolId: currentUser.schoolId, // IMPORTANT
+                category: docCategory,
                 bookNumber: newDoc.bookNumber, // Use user input
                 title: newDoc.title,
-                from: newDoc.from,
+                from: isOrder ? (sysConfig?.schoolName || 'โรงเรียน') : newDoc.from,
                 description: newDoc.description,
-                priority: newDoc.priority as any,
+                priority: newDoc.priority,
                 date: now.toISOString().split('T')[0],
                 timestamp: now.toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'}),
                 attachments: tempAttachments, // Save the list
-                status: 'PendingDirector',
-                targetTeachers: [],
+                status: isOrder ? 'Distributed' : 'PendingDirector',
+                targetTeachers: isOrder ? selectedTeachers : [],
                 acknowledgedBy: []
             };
+
+            // Add Director Fields Logic only if Order
+            if (isOrder) {
+                created.directorCommand = 'สั่งการตามเอกสารแนบ (บันทึกจากธุรการ)';
+                created.directorSignatureDate = now.toLocaleString('th-TH');
+            }
 
             if (isConfigured && db) {
                 await addDoc(collection(db, "documents"), created);
@@ -371,6 +391,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
             setNewDoc({ bookNumber: '', title: '', from: '', priority: 'Normal', description: '' });
             setTempAttachments([]);
             setLinkInput('');
+            setSelectedTeachers([]);
             setViewMode('LIST');
 
         } catch (e) {
@@ -574,13 +595,16 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
 
         const nowStr = new Date().toLocaleString('th-TH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
 
-        const updateData = {
+        // FIX: Construct update object without undefined for Firestore
+        const updateData: any = {
             directorCommand: finalCommand,
             directorSignatureDate: nowStr,
             targetTeachers: selectedTeachers,
             status: 'Distributed',
-            signedFileUrl: signedUrl || undefined
         };
+        if (signedUrl) {
+            updateData.signedFileUrl = signedUrl;
+        }
 
         if (isConfigured && db) {
             try {
@@ -630,7 +654,8 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                 const snapshot = await getDocs(qFind);
                  if (!snapshot.empty) {
                     const docRef = snapshot.docs[0].ref;
-                    const currentAck = snapshot.docs[0].data().acknowledgedBy || [];
+                    const docData = snapshot.docs[0].data() as DocumentItem;
+                    const currentAck = docData.acknowledgedBy || [];
                     if (!currentAck.includes(currentUser.id)) {
                         await updateDoc(docRef, {
                             acknowledgedBy: [...currentAck, currentUser.id]
@@ -718,7 +743,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                         </div>
                         {(isDocOfficer || isSystemAdmin) && (
                             <button onClick={handleInitCreate} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow-sm flex items-center gap-2">
-                                <FilePlus size={18} /> ลงรับหนังสือ
+                                <FilePlus size={18} /> ลงรับ/สร้างหนังสือ
                             </button>
                         )}
                     </div>
@@ -729,6 +754,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                         ) : displayedDocs.map((doc, index) => {
                              const isUnread = doc.status === 'Distributed' && doc.targetTeachers.includes(currentUser.id) && !doc.acknowledgedBy.includes(currentUser.id);
                              const isAcknowledged = doc.status === 'Distributed' && doc.acknowledgedBy.includes(currentUser.id);
+                             const isOrder = doc.category === 'ORDER';
                              
                              return (
                                 <div key={doc.id}
@@ -739,12 +765,14 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                                 >
                                     <div className="flex justify-between items-start cursor-pointer" onClick={() => { setSelectedDoc(doc); setViewMode('DETAIL'); }}>
                                         <div className="flex items-start gap-4">
-                                            <div className={`p-3 rounded-lg ${doc.status === 'Distributed' ? 'bg-green-50 text-green-600' : 'bg-slate-100 text-slate-500'}`}>
-                                                <FileText size={24} />
+                                            <div className={`p-3 rounded-lg ${doc.status === 'Distributed' ? (isOrder ? 'bg-indigo-100 text-indigo-600' : 'bg-green-50 text-green-600') : 'bg-slate-100 text-slate-500'}`}>
+                                                {isOrder ? <Megaphone size={24}/> : <FileText size={24} />}
                                             </div>
                                             <div>
                                                 <div className="flex items-center gap-2 mb-1">
-                                                    <span className="text-xs font-mono bg-slate-100 px-2 py-0.5 rounded text-slate-600">รับที่: {doc.bookNumber}</span>
+                                                    <span className={`text-xs font-mono px-2 py-0.5 rounded ${isOrder ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-600'}`}>
+                                                        {isOrder ? 'เลขที่คำสั่ง' : 'รับที่'}: {doc.bookNumber}
+                                                    </span>
                                                     <span className={`px-2 py-0.5 rounded text-xs font-semibold border ${getPriorityColor(doc.priority)}`}>
                                                         {doc.priority}
                                                     </span>
@@ -763,7 +791,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                                                 <p className="text-sm text-slate-500 line-clamp-1">{doc.description}</p>
                                                 
                                                 {/* Director Progress Indicator */}
-                                                {isDirector && doc.status === 'Distributed' && (
+                                                {(isDirector || isDocOfficer) && doc.status === 'Distributed' && (
                                                     <div className="mt-2 text-xs font-bold text-green-600 flex items-center gap-1">
                                                         <CheckCircle size={12} />
                                                         รับทราบแล้ว {doc.acknowledgedBy.length}/{doc.targetTeachers.length} ท่าน
@@ -789,8 +817,8 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                                                  </span>
                                             )}
                                             
-                                            {/* DELETE BUTTON: Admin Can Delete ALL, Doc Officer Can Delete Pending */}
-                                            {(isSystemAdmin || (isDocOfficer && doc.status === 'PendingDirector')) && (
+                                            {/* DELETE BUTTON: Admin Can Delete ALL, Doc Officer Can Delete Pending OR Order */}
+                                            {(isSystemAdmin || (isDocOfficer && (doc.status === 'PendingDirector' || isOrder))) && (
                                                 <button 
                                                     onClick={(e) => handleDeleteDoc(e, doc.id)}
                                                     className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors z-10"
@@ -909,7 +937,29 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                             <p className="text-sm text-slate-500">กรุณาอย่าปิดหน้าต่าง</p>
                         </div>
                     )}
-                    <h3 className="text-xl font-bold text-slate-800 mb-6 border-b pb-4">ลงทะเบียนรับหนังสือราชการ</h3>
+                    
+                    {/* Header & Tabs */}
+                    <div className="mb-6 border-b pb-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <h3 className="text-xl font-bold text-slate-800">ลงทะเบียนรับ/สร้างหนังสือ</h3>
+                        
+                        {/* Type Toggle */}
+                        <div className="bg-slate-100 p-1 rounded-lg flex shadow-inner">
+                            <button 
+                                type="button" 
+                                onClick={() => setDocCategory('INCOMING')}
+                                className={`px-4 py-2 rounded-md text-sm font-bold flex items-center gap-2 transition-all ${docCategory === 'INCOMING' ? 'bg-white text-blue-600 shadow' : 'text-slate-500 hover:text-slate-700'}`}
+                            >
+                                <FileBadge size={16}/> ลงรับหนังสือภายนอก
+                            </button>
+                            <button 
+                                type="button" 
+                                onClick={() => setDocCategory('ORDER')}
+                                className={`px-4 py-2 rounded-md text-sm font-bold flex items-center gap-2 transition-all ${docCategory === 'ORDER' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:text-slate-700'}`}
+                            >
+                                <Megaphone size={16}/> บันทึกคำสั่งปฏิบัติราชการ
+                            </button>
+                        </div>
+                    </div>
                     
                     {!sysConfig?.scriptUrl && (
                         <div className="bg-yellow-50 text-yellow-800 p-4 rounded-lg mb-6 border border-yellow-200 flex items-start gap-3">
@@ -923,9 +973,12 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
 
                     <form onSubmit={handleCreateDoc} className="space-y-4">
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {/* Left Column: Form Fields */}
                             <div className="space-y-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 mb-1">เลขที่รับ (แก้ไขได้)</label>
+                                <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
+                                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                                        {docCategory === 'ORDER' ? 'เลขที่คำสั่ง' : 'เลขที่รับ (แก้ไขได้)'}
+                                    </label>
                                     <div className="relative">
                                         <Settings className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16}/>
                                         <input 
@@ -934,21 +987,28 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                                             value={newDoc.bookNumber} 
                                             onChange={e => setNewDoc({...newDoc, bookNumber: e.target.value})} 
                                             className="w-full pl-9 pr-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono font-bold text-slate-700"
-                                            placeholder="XXX/25XX"
+                                            placeholder={docCategory === 'ORDER' ? "คำสั่งที่ XX/25XX" : "XXX/25XX"}
                                         />
                                     </div>
-                                    <p className="text-[10px] text-slate-400 mt-1">* ระบบคำนวณเลขถัดไปให้อัตโนมัติ ท่านสามารถแก้ไขเพื่อตั้งค่าเริ่มต้นใหม่ได้</p>
+                                    <p className="text-[10px] text-slate-400 mt-1">
+                                        {docCategory === 'ORDER' ? '* ระบุเลขที่คำสั่งตามเอกสารจริง' : '* ระบบคำนวณเลขถัดไปให้อัตโนมัติ ท่านสามารถแก้ไขเพื่อตั้งค่าเริ่มต้นใหม่ได้'}
+                                    </p>
                                 </div>
+
                                 <div>
                                     <label className="block text-sm font-medium text-slate-700 mb-1">เรื่อง</label>
                                     <input required type="text" value={newDoc.title} onChange={e => setNewDoc({...newDoc, title: e.target.value})} className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
                                 </div>
+
                                 <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-sm font-medium text-slate-700 mb-1">จาก</label>
-                                        <input required type="text" value={newDoc.from} onChange={e => setNewDoc({...newDoc, from: e.target.value})} className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
-                                    </div>
-                                    <div>
+                                    {/* Hide From for Orders */}
+                                    {docCategory === 'INCOMING' && (
+                                        <div>
+                                            <label className="block text-sm font-medium text-slate-700 mb-1">จาก</label>
+                                            <input required type="text" value={newDoc.from} onChange={e => setNewDoc({...newDoc, from: e.target.value})} className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+                                        </div>
+                                    )}
+                                    <div className={docCategory === 'ORDER' ? 'col-span-2' : ''}>
                                         <label className="block text-sm font-medium text-slate-700 mb-1">ความเร่งด่วน</label>
                                         <select value={newDoc.priority} onChange={e => setNewDoc({...newDoc, priority: e.target.value})} className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
                                             <option value="Normal">ปกติ</option>
@@ -963,72 +1023,122 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                                 </div>
                             </div>
                             
-                            <div className="space-y-4 bg-slate-50 p-4 rounded-lg border border-slate-200">
-                                <h4 className="font-bold text-slate-700 mb-2 flex items-center gap-2">
-                                    <UploadCloud size={18}/> อัปโหลดไฟล์ (Google Drive)
-                                </h4>
-                                
-                                {/* 1. List current attachments */}
-                                {tempAttachments.length > 0 && (
-                                    <div className="bg-white rounded border border-slate-200 mb-4 divide-y">
-                                        {tempAttachments.map(att => (
-                                            <div key={att.id} className="p-2 flex justify-between items-center text-sm">
-                                                <div className="flex items-center gap-2 overflow-hidden">
-                                                    {att.type === 'LINK' ? <ExternalLink size={16} className="text-blue-500 shrink-0"/> : <FileIcon size={16} className="text-orange-500 shrink-0"/>}
-                                                    <span className="truncate">{att.name}</span>
+                            {/* Right Column: Upload & Teacher Selection (For Order) */}
+                            <div className="space-y-4">
+                                <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
+                                    <h4 className="font-bold text-slate-700 mb-2 flex items-center gap-2">
+                                        <UploadCloud size={18}/> อัปโหลดไฟล์ (Google Drive)
+                                    </h4>
+                                    
+                                    {/* 1. List current attachments */}
+                                    {tempAttachments.length > 0 && (
+                                        <div className="bg-white rounded border border-slate-200 mb-4 divide-y">
+                                            {tempAttachments.map(att => (
+                                                <div key={att.id} className="p-2 flex justify-between items-center text-sm">
+                                                    <div className="flex items-center gap-2 overflow-hidden">
+                                                        {att.type === 'LINK' ? <ExternalLink size={16} className="text-blue-500 shrink-0"/> : <FileIcon size={16} className="text-orange-500 shrink-0"/>}
+                                                        <span className="truncate">{att.name}</span>
+                                                    </div>
+                                                    <button type="button" onClick={() => handleRemoveAttachment(att.id)} className="text-red-400 hover:text-red-600 p-1">
+                                                        <Trash2 size={16}/>
+                                                    </button>
                                                 </div>
-                                                <button type="button" onClick={() => handleRemoveAttachment(att.id)} className="text-red-400 hover:text-red-600 p-1">
-                                                    <Trash2 size={16}/>
-                                                </button>
-                                            </div>
-                                        ))}
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    {/* 2. Add File */}
+                                    <div>
+                                        <label className="block text-xs font-medium text-slate-500 mb-1">
+                                            {docCategory === 'ORDER' ? 'เลือกไฟล์คำสั่ง (ไม่ประทับตรา)' : 'เลือกไฟล์เพื่ออัปโหลด (Auto Stamp ไฟล์แรก)'}
+                                        </label>
+                                        <input 
+                                            type="file" 
+                                            accept=".pdf,image/*" 
+                                            onChange={handleAddFile}
+                                            disabled={!sysConfig?.scriptUrl}
+                                            className="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        />
+                                        {docCategory === 'INCOMING' && (
+                                            <p className="text-[10px] text-slate-400 mt-1">* ระบบจะประทับตราเลขรับอัตโนมัติเฉพาะไฟล์ PDF ไฟล์แรกที่อัปโหลด</p>
+                                        )}
                                     </div>
-                                )}
 
-                                {/* 2. Add File */}
-                                <div>
-                                    <label className="block text-xs font-medium text-slate-500 mb-1">เลือกไฟล์เพื่ออัปโหลด (Auto Stamp ไฟล์แรก)</label>
-                                    <input 
-                                        type="file" 
-                                        accept=".pdf,image/*" 
-                                        onChange={handleAddFile}
-                                        disabled={!sysConfig?.scriptUrl}
-                                        className="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                                    />
-                                    <p className="text-[10px] text-slate-400 mt-1">* ระบบจะประทับตราเลขรับอัตโนมัติเฉพาะไฟล์ PDF ไฟล์แรกที่อัปโหลด</p>
-                                </div>
+                                    <div className="text-center text-xs text-slate-400 font-bold my-2">- หรือ -</div>
 
-                                <div className="text-center text-xs text-slate-400 font-bold my-2">- หรือ -</div>
-
-                                {/* 3. Add Google Drive Link */}
-                                <div className="flex flex-col gap-2">
-                                    <label className="block text-xs font-medium text-slate-500">แปะลิงก์ Google Drive (กรณีมีไฟล์อยู่แล้ว)</label>
-                                    <input 
-                                        type="text" 
-                                        placeholder="ชื่อเอกสาร (ถ้ามี)" 
-                                        value={linkNameInput}
-                                        onChange={e => setLinkNameInput(e.target.value)}
-                                        className="w-full px-3 py-2 border rounded text-sm focus:ring-1 outline-none"
-                                    />
-                                    <div className="flex gap-2">
+                                    {/* 3. Add Google Drive Link */}
+                                    <div className="flex flex-col gap-2">
+                                        <label className="block text-xs font-medium text-slate-500">แปะลิงก์ Google Drive (กรณีมีไฟล์อยู่แล้ว)</label>
                                         <input 
                                             type="text" 
-                                            placeholder="วางลิงก์ https://..." 
-                                            value={linkInput}
-                                            onChange={e => setLinkInput(e.target.value)}
+                                            placeholder="ชื่อเอกสาร (ถ้ามี)" 
+                                            value={linkNameInput}
+                                            onChange={e => setLinkNameInput(e.target.value)}
                                             className="w-full px-3 py-2 border rounded text-sm focus:ring-1 outline-none"
                                         />
-                                        <button type="button" onClick={handleAddLink} className="bg-slate-600 text-white px-3 py-2 rounded hover:bg-slate-700">
-                                            <Plus size={16}/>
-                                        </button>
+                                        <div className="flex gap-2">
+                                            <input 
+                                                type="text" 
+                                                placeholder="วางลิงก์ https://..." 
+                                                value={linkInput}
+                                                onChange={e => setLinkInput(e.target.value)}
+                                                className="w-full px-3 py-2 border rounded text-sm focus:ring-1 outline-none"
+                                            />
+                                            <button type="button" onClick={handleAddLink} className="bg-slate-600 text-white px-3 py-2 rounded hover:bg-slate-700">
+                                                <Plus size={16}/>
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
+
+                                {/* FOR ORDER: SELECT RECIPIENTS IMMEDIATELY */}
+                                {docCategory === 'ORDER' && (
+                                    <div className="bg-indigo-50 p-4 rounded-lg border border-indigo-200 flex-1 flex flex-col">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <h4 className="font-bold text-indigo-900 flex items-center gap-2">
+                                                <Users size={18}/> ผู้รับปฏิบัติ (ส่งทันที)
+                                            </h4>
+                                            <div className="flex items-center gap-2">
+                                                <input 
+                                                    type="checkbox" 
+                                                    checked={selectedTeachers.length === allTeachers.length && allTeachers.length > 0}
+                                                    onChange={(e) => handleSelectAllTeachers(e.target.checked)}
+                                                    className="rounded text-indigo-600 w-4 h-4 cursor-pointer"
+                                                />
+                                                <span className="text-xs text-indigo-800 font-bold">เลือกทั้งหมด</span>
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="bg-white border border-indigo-100 rounded-lg p-2 overflow-y-auto max-h-[200px] shadow-inner">
+                                            {allTeachers.map(t => (
+                                                <label key={t.id} className="flex items-center gap-2 p-2 hover:bg-indigo-50 rounded cursor-pointer border-b border-slate-50 last:border-0">
+                                                    <input 
+                                                        type="checkbox" 
+                                                        checked={selectedTeachers.includes(t.id)}
+                                                        onChange={(e) => {
+                                                            if (e.target.checked) setSelectedTeachers([...selectedTeachers, t.id]);
+                                                            else setSelectedTeachers(selectedTeachers.filter(id => id !== t.id));
+                                                        }}
+                                                        className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4"
+                                                    />
+                                                    <span className="text-sm text-slate-700">{t.name}</span>
+                                                </label>
+                                            ))}
+                                        </div>
+                                        <div className="mt-2 text-xs text-indigo-600 text-right">
+                                            เลือกแล้ว {selectedTeachers.length} ท่าน
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
 
                         <div className="flex gap-3 pt-4 border-t mt-4">
-                            <button type="button" onClick={() => setViewMode('LIST')} className="flex-1 py-2 text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200">ยกเลิก</button>
-                            <button type="submit" className="flex-1 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold shadow-md">บันทึกข้อมูล</button>
+                            <button type="button" onClick={() => setViewMode('LIST')} className="flex-1 py-3 text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 font-bold">ยกเลิก</button>
+                            <button type="submit" className={`flex-1 py-3 text-white rounded-lg hover:brightness-90 font-bold shadow-md flex items-center justify-center gap-2 ${docCategory === 'ORDER' ? 'bg-indigo-600' : 'bg-blue-600'}`}>
+                                {docCategory === 'ORDER' ? <Send size={20}/> : <Save size={20}/>} 
+                                {docCategory === 'ORDER' ? 'บันทึกและส่งทันที' : 'บันทึกและส่งให้ ผอ.'}
+                            </button>
                         </div>
                     </form>
                 </div>
@@ -1062,6 +1172,10 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                         <div className="flex flex-col gap-3">
                             {selectedDoc.attachments.map((att, idx) => {
                                 // If distributed and is the first file, show the stamped version
+                                // BUT: If it's an ORDER type that was manually uploaded as signed, we just show the original attachment.
+                                // Logic: signedFileUrl usually comes from Director Action. If ORDER type, we might not have signedFileUrl unless added later?
+                                // Actually, for ORDER type, we just show original attachments.
+                                
                                 const isDistributed = selectedDoc.status === 'Distributed';
                                 const showSigned = isDistributed && idx === 0 && selectedDoc.signedFileUrl;
                                 const targetUrl = showSigned ? selectedDoc.signedFileUrl : att.url;
@@ -1074,7 +1188,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                                         key={idx}
                                         onClick={() => window.open(targetUrl, '_blank')}
                                         className={`w-full p-4 text-white rounded-xl shadow-md active:scale-[0.98] transition-all flex items-center justify-between group 
-                                            ${showSigned ? 'bg-emerald-600 hover:bg-emerald-700 border-2 border-emerald-400' : 'bg-blue-600 hover:bg-blue-700'}
+                                            ${showSigned ? 'bg-emerald-600 hover:bg-emerald-700 border-2 border-emerald-400' : (selectedDoc.category === 'ORDER' ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-blue-600 hover:bg-blue-700')}
                                         `}
                                     >
                                         <div className="flex items-center gap-4">
@@ -1110,7 +1224,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                                  <span className="font-bold text-lg text-slate-800">{selectedDoc.title}</span>
                              </div>
                              <div className="flex flex-col">
-                                 <span className="text-slate-500 text-xs">เลขที่รับ</span>
+                                 <span className="text-slate-500 text-xs">{selectedDoc.category === 'ORDER' ? 'เลขที่คำสั่ง' : 'เลขที่รับ'}</span>
                                  <span className="font-mono font-bold text-slate-700">{selectedDoc.bookNumber}</span>
                              </div>
                              <div className="flex flex-col">
@@ -1132,7 +1246,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                                  </p>
                              </div>
                              <div className="flex flex-col">
-                                 <span className="text-slate-500 text-xs">วันที่รับ</span>
+                                 <span className="text-slate-500 text-xs">วันที่รับ/บันทึก</span>
                                  <span className="text-slate-700">{selectedDoc.date} เวลา {selectedDoc.timestamp}</span>
                              </div>
                              <div className="flex flex-col">

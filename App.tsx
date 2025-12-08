@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { MOCK_DOCUMENTS, MOCK_LEAVE_REQUESTS, MOCK_TRANSACTIONS, MOCK_TEACHERS, MOCK_SCHOOLS } from './constants';
 import { db, isConfigured } from './firebaseConfig';
-import { collection, onSnapshot, setDoc, doc, deleteDoc, query, where } from 'firebase/firestore';
+import { collection, onSnapshot, setDoc, doc, deleteDoc, query, where, QuerySnapshot, DocumentData } from 'firebase/firestore';
 
 // Keys for LocalStorage
 const SESSION_KEY = 'schoolos_session_v1';
@@ -65,7 +65,7 @@ const App: React.FC = () => {
             }, 3000);
 
             // 1. Sync Schools
-            unsubSchools = onSnapshot(collection(db, 'schools'), (snapshot) => {
+            unsubSchools = onSnapshot(collection(db, 'schools'), (snapshot: QuerySnapshot<DocumentData>) => {
                 const schoolsData = snapshot.docs.map(doc => doc.data() as School);
                 if (schoolsData.length > 0) {
                     setAllSchools(schoolsData);
@@ -78,7 +78,7 @@ const App: React.FC = () => {
             });
 
             // 2. Sync Teachers
-            unsubTeachers = onSnapshot(collection(db, 'teachers'), (snapshot) => {
+            unsubTeachers = onSnapshot(collection(db, 'teachers'), (snapshot: QuerySnapshot<DocumentData>) => {
                 if (timeoutId) clearTimeout(timeoutId);
                 const teachersData = snapshot.docs.map(doc => doc.data() as Teacher);
                 if (teachersData.length > 0) {
@@ -179,7 +179,7 @@ const App: React.FC = () => {
             // To handle "New Notification" sound, we track changes
             let isInitial = true;
 
-            unsubLeave = onSnapshot(q, (snapshot) => {
+            unsubLeave = onSnapshot(q, (snapshot: QuerySnapshot<DocumentData>) => {
                 // Update Count for Badge
                 setPendingLeaveCount(snapshot.size);
 
@@ -232,7 +232,7 @@ const App: React.FC = () => {
 
             let isInitial = true;
 
-            unsubDocs = onSnapshot(qDocs, (snapshot) => {
+            unsubDocs = onSnapshot(qDocs, (snapshot: QuerySnapshot<DocumentData>) => {
                 if (isInitial) {
                     isInitial = false;
                     return;
@@ -555,7 +555,7 @@ const App: React.FC = () => {
                     focusRequestId={focusItem?.view === SystemView.LEAVE ? focusItem.id : null}
                     onClearFocus={() => setFocusItem(null)}
                 />;
-            case SystemView.FINANCE: return <FinanceSystem currentUser={currentUser} />;
+            case SystemView.FINANCE: return <FinanceSystem currentUser={currentUser} allTeachers={schoolTeachers} />; // Pass schoolTeachers as allTeachers
             case SystemView.ATTENDANCE: return <AttendanceSystem currentUser={currentUser} allTeachers={schoolTeachers} currentSchool={currentSchool} />;
             case SystemView.PLAN: return <ActionPlanSystem currentUser={currentUser} />;
             case SystemView.ADMIN_USERS: return <AdminUserManagement teachers={schoolTeachers} currentSchool={currentSchool} onUpdateSchool={handleUpdateSchool} onAddTeacher={handleAddTeacher} onEditTeacher={handleEditTeacher} onDeleteTeacher={handleDeleteTeacher} />;
