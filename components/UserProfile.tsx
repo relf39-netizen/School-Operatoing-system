@@ -26,9 +26,11 @@ const UserProfile: React.FC<UserProfileProps> = ({ currentUser, onUpdateUser }) 
         if (e.target.files && e.target.files[0]) {
             const file = e.target.files[0];
             const reader = new FileReader();
-            reader.onload = (evt) => {
-                const base64 = evt.target?.result as string;
-                setSignaturePreview(base64);
+            reader.onload = () => {
+                if (reader.result) {
+                    const base64 = reader.result as string;
+                    setSignaturePreview(base64);
+                }
             };
             reader.readAsDataURL(file);
         }

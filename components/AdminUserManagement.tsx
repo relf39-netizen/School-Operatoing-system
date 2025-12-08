@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Teacher, TeacherRole, SystemConfig, School } from '../types';
 import { Users, UserPlus, Edit, Trash2, CheckSquare, Square, Save, X, Settings, Database, Link as LinkIcon, AlertCircle, UploadCloud, ImageIcon, MoveVertical, Maximize, Shield, MapPin, Target, Crosshair, Clock, Calendar, RefreshCw, UserCheck } from 'lucide-react';
@@ -75,9 +76,11 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ teachers, onA
         if (e.target.files && e.target.files[0]) {
             const file = e.target.files[0];
             const reader = new FileReader();
-            reader.onload = (evt) => {
-                const base64 = evt.target?.result as string;
-                setConfig(prev => ({ ...prev, [field]: base64 }));
+            reader.onload = () => {
+                if (reader.result) {
+                    const base64 = reader.result as string;
+                    setConfig(prev => ({ ...prev, [field]: base64 }));
+                }
             };
             reader.readAsDataURL(file);
         }

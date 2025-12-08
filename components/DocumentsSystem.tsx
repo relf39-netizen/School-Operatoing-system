@@ -4,7 +4,7 @@ import { DocumentItem, Teacher, Attachment, SystemConfig } from '../types';
 import { MOCK_DOCUMENTS, CURRENT_SCHOOL_YEAR } from '../constants';
 import { Search, FileText, Users, PenTool, CheckCircle, FilePlus, Eye, CheckSquare, Loader, Link as LinkIcon, Download, Trash2, File as FileIcon, ExternalLink, Plus, UploadCloud, AlertTriangle, Monitor, FileCheck, ArrowLeft, Send, MousePointerClick, ChevronLeft, ChevronRight, Settings, FileBadge, Megaphone, Save } from 'lucide-react';
 import { db, isConfigured } from '../firebaseConfig';
-import { collection, addDoc, onSnapshot, query, orderBy, updateDoc, where, doc, getDoc, deleteDoc, QuerySnapshot, DocumentData } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, query, orderBy, updateDoc, where, doc, getDoc, deleteDoc, getDocs, QuerySnapshot, DocumentData } from 'firebase/firestore';
 import { stampPdfDocument, stampReceiveNumber } from '../utils/pdfStamper';
 
 interface DocumentsSystemProps {
@@ -424,8 +424,8 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
 
         try {
             if (isConfigured && db) {
+                // Use static imports
                 const q = query(collection(db, "documents"), where("id", "==", docId));
-                const { getDocs, deleteDoc } = await import('firebase/firestore');
                 const snapshot = await getDocs(q);
                 if (!snapshot.empty) {
                     const docRef = snapshot.docs[0].ref;
@@ -625,7 +625,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
 
         if (isConfigured && db) {
             try {
-                const { getDocs, where } = await import('firebase/firestore');
+                // Use static imports
                 const qFind = query(collection(db, "documents"), where("id", "==", selectedDoc.id));
                 const snapshot = await getDocs(qFind);
                 if (!snapshot.empty) {
@@ -666,7 +666,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
         
         if (isConfigured && db) {
             try {
-                const { getDocs, where } = await import('firebase/firestore');
+                // Use static imports
                 const qFind = query(collection(db, "documents"), where("id", "==", docId));
                 const snapshot = await getDocs(qFind);
                  if (!snapshot.empty) {
@@ -945,7 +945,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                 </>
             )}
 
-            {/* --- CREATE VIEW --- */}
+            {/* ... (Create View and Detail View remain largely unchanged except for function closures if needed) ... */}
             {viewMode === 'CREATE' && (
                 <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-6 max-w-4xl mx-auto">
                     {isUploading && (
