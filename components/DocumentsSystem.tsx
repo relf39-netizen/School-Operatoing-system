@@ -414,7 +414,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
             setIsUploading(false);
             setUploadProgress('');
             console.error("Create Doc Error:", e);
-            alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล กรุณาลองใหม่อีกครั้ง (" + e + ")");
+            alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล กรุณาลองใหม่อีกครั้ง (" + (e as Error).message + ")");
         }
     };
 
@@ -566,7 +566,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
 
          } catch (error) {
             console.error("PDF Generation Error", error);
-            alert("Error: " + error);
+            alert("Error: " + (error as Error).message);
             setIsSigning(false);
          }
     };

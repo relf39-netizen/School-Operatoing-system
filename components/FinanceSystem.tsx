@@ -885,3 +885,4 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
 };
 
 export default FinanceSystem;
+ 
