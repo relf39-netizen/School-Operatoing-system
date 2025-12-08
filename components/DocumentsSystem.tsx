@@ -355,32 +355,48 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
         const docId = Date.now().toString();
 
         try {
-            // FIX: Construct object without undefined fields for Firestore
+            const sanitizedAttachments = tempAttachments.map(att => ({
+                id: att.id,
+                name: att.name || 'Unnamed',
+                type: att.type || 'LINK',
+                url: att.url || '',
+                fileType: att.fileType || ''
+            }));
+
+            // Prepare base object - CRITICAL FIX: Do not use undefined values
             const created: any = {
                 id: docId,
-                schoolId: currentUser.schoolId, // IMPORTANT
+                schoolId: currentUser.schoolId, 
                 category: docCategory,
-                bookNumber: newDoc.bookNumber, // Use user input
-                title: newDoc.title,
-                from: isOrder ? (sysConfig?.schoolName || 'โรงเรียน') : newDoc.from,
-                description: newDoc.description,
-                priority: newDoc.priority,
+                bookNumber: newDoc.bookNumber || '', 
+                title: newDoc.title || '',
+                description: newDoc.description || '',
+                priority: newDoc.priority || 'Normal',
                 date: now.toISOString().split('T')[0],
                 timestamp: now.toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'}),
-                attachments: tempAttachments, // Save the list
-                status: isOrder ? 'Distributed' : 'PendingDirector',
-                targetTeachers: isOrder ? selectedTeachers : [],
+                attachments: sanitizedAttachments, 
                 acknowledgedBy: []
             };
 
-            // Add Director Fields Logic only if Order
+            // Set Type-Specific Fields
             if (isOrder) {
-                created.directorCommand = 'สั่งการตามเอกสารแนบ (บันทึกจากธุรการ)';
+                created.status = 'Distributed';
+                created.targetTeachers = selectedTeachers; // Array of strings is safe
+                created.from = sysConfig?.schoolName || 'โรงเรียน';
+                // Automatically set director command/signature fields for Order so Director doesn't need to act
+                created.directorCommand = 'สั่งการตามเอกสารแนบ';
                 created.directorSignatureDate = now.toLocaleString('th-TH');
+            } else {
+                created.status = 'PendingDirector';
+                created.targetTeachers = [];
+                created.from = newDoc.from || '';
+                // Do NOT set directorCommand to undefined here, just omit it or set to null if schema allows
             }
 
             if (isConfigured && db) {
-                await addDoc(collection(db, "documents"), created);
+                // Ensure no undefined values are in the object before adding
+                const cleanObject = JSON.parse(JSON.stringify(created));
+                await addDoc(collection(db, "documents"), cleanObject);
             } else {
                 setDocs([created, ...docs]);
             }
@@ -397,8 +413,8 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
         } catch (e) {
             setIsUploading(false);
             setUploadProgress('');
-            console.error(e);
-            alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล");
+            console.error("Create Doc Error:", e);
+            alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล กรุณาลองใหม่อีกครั้ง (" + e + ")");
         }
     };
 
@@ -597,11 +613,12 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
 
         // FIX: Construct update object without undefined for Firestore
         const updateData: any = {
-            directorCommand: finalCommand,
+            directorCommand: finalCommand || '',
             directorSignatureDate: nowStr,
             targetTeachers: selectedTeachers,
             status: 'Distributed',
         };
+        // Only add signedFileUrl if it's not null/undefined
         if (signedUrl) {
             updateData.signedFileUrl = signedUrl;
         }
@@ -701,6 +718,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
     // --- Filtering Logic ---
     const filteredDocs = docs.filter(doc => {
         if (isDirector || isDocOfficer || isSystemAdmin) return true;
+        // Teachers see distributed docs they are targeted in
         return doc.status === 'Distributed' && doc.targetTeachers.includes(currentUser.id);
     });
 
@@ -1169,6 +1187,13 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                         <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
                             <LinkIcon size={20}/> เอกสารแนบ (แตะเพื่อเปิด)
                         </h3>
+
+                        {/* Warning Message */}
+                        <div className="mb-4 p-3 bg-blue-50 border border-blue-100 rounded-lg flex items-start gap-2 text-sm text-blue-800">
+                             <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                             <p>การคลิกเปิดอ่านไฟล์เอกสาร จะถือว่าท่าน <strong>"รับทราบ"</strong> หนังสือฉบับนี้โดยอัตโนมัติ</p>
+                        </div>
+                        
                         <div className="flex flex-col gap-3">
                             {selectedDoc.attachments.map((att, idx) => {
                                 // If distributed and is the first file, show the stamped version
@@ -1186,7 +1211,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                                 return (
                                     <button 
                                         key={idx}
-                                        onClick={() => window.open(targetUrl, '_blank')}
+                                        onClick={() => handleOpenAndAck(selectedDoc, targetUrl || '')}
                                         className={`w-full p-4 text-white rounded-xl shadow-md active:scale-[0.98] transition-all flex items-center justify-between group 
                                             ${showSigned ? 'bg-emerald-600 hover:bg-emerald-700 border-2 border-emerald-400' : (selectedDoc.category === 'ORDER' ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-blue-600 hover:bg-blue-700')}
                                         `}
@@ -1260,8 +1285,8 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
 
                     {/* 3. Action Panel (Director / Teacher) */}
                     
-                    {/* ROLE: DIRECTOR ACTIONS */}
-                    {isDirector && selectedDoc.status === 'PendingDirector' && (
+                    {/* ROLE: DIRECTOR ACTIONS - Hide if it is an ORDER category (since Order bypasses Director) */}
+                    {isDirector && selectedDoc.status === 'PendingDirector' && selectedDoc.category !== 'ORDER' && (
                         <div className="bg-blue-50 p-6 rounded-xl border border-blue-200 shadow-sm animate-fade-in">
                             <div className="flex items-center gap-2 mb-4 text-blue-900 border-b border-blue-200 pb-2">
                                 <PenTool size={20}/>

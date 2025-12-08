@@ -1,9 +1,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { LeaveRequest, Teacher, School, SystemConfig } from '../types';
-import { Clock, CheckCircle, XCircle, FilePlus, FileText, UserCheck, Printer, ArrowLeft, Loader, Database, Phone, Calendar, User, ChevronRight, Paperclip } from 'lucide-react';
+import { Clock, CheckCircle, XCircle, FilePlus, FileText, UserCheck, Printer, ArrowLeft, Loader, Database, Phone, Calendar, User, ChevronRight, Paperclip, Trash2 } from 'lucide-react';
 import { db, isConfigured } from '../firebaseConfig';
-import { collection, addDoc, onSnapshot, query, orderBy, doc, updateDoc, QuerySnapshot, DocumentData, getDoc, where } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, query, orderBy, doc, updateDoc, deleteDoc, QuerySnapshot, DocumentData, getDoc, where } from 'firebase/firestore';
 import { MOCK_LEAVE_REQUESTS } from '../constants';
 import { generateOfficialLeavePdf } from '../utils/pdfStamper';
 
@@ -392,6 +392,29 @@ const LeaveSystem: React.FC<LeaveSystemProps> = ({ currentUser, allTeachers, cur
         }
     };
 
+    const handleDeleteRequest = async (e: React.MouseEvent, reqId: string) => {
+        e.stopPropagation();
+        
+        // Strict Check: Only Director or Admin can delete
+        if (!isDirector && !isSystemAdmin) {
+            alert("สิทธิ์ไม่ถึง: เฉพาะผู้อำนวยการเท่านั้นที่สามารถลบรายการลาได้");
+            return;
+        }
+
+        if (!confirm("คุณต้องการลบรายการลานี้ใช่หรือไม่? (การกระทำนี้ไม่สามารถย้อนกลับได้)")) return;
+
+        if (isConfigured && db) {
+            try {
+                await deleteDoc(doc(db, "leave_requests", reqId));
+            } catch (error) {
+                console.error("Delete error", error);
+                alert("เกิดข้อผิดพลาดในการลบข้อมูล");
+            }
+        } else {
+            setRequests(requests.filter(r => r.id !== reqId));
+        }
+    };
+
     const handleDirectorApprove = async (req: LeaveRequest, isApproved: boolean) => {
         setIsProcessingApproval(true);
         
@@ -467,7 +490,7 @@ const LeaveSystem: React.FC<LeaveSystemProps> = ({ currentUser, allTeachers, cur
                                     <div 
                                         key={req.id}
                                         onClick={() => setSelectedRequest(req)}
-                                        className="bg-white rounded-xl shadow-md border-l-4 border-l-yellow-400 p-4 cursor-pointer hover:shadow-lg transition-all active:scale-[0.98]"
+                                        className="bg-white rounded-xl shadow-md border-l-4 border-l-yellow-400 p-4 cursor-pointer hover:shadow-lg transition-all active:scale-[0.98] relative group"
                                     >
                                         <div className="flex justify-between items-start mb-3">
                                             <div className="flex items-center gap-3">
@@ -479,9 +502,21 @@ const LeaveSystem: React.FC<LeaveSystemProps> = ({ currentUser, allTeachers, cur
                                                     <div className="text-xs text-slate-500">{req.teacherPosition || 'ครู'}</div>
                                                 </div>
                                             </div>
-                                            <span className="bg-yellow-100 text-yellow-700 text-[10px] px-2 py-1 rounded-full font-bold border border-yellow-200">
-                                                รอการพิจารณา
-                                            </span>
+                                            <div className="flex flex-col items-end gap-1">
+                                                <span className="bg-yellow-100 text-yellow-700 text-[10px] px-2 py-1 rounded-full font-bold border border-yellow-200">
+                                                    รอการพิจารณา
+                                                </span>
+                                                {/* Only Director can delete for evidence */}
+                                                {(isDirector || isSystemAdmin) && (
+                                                    <button 
+                                                        onClick={(e) => handleDeleteRequest(e, req.id)}
+                                                        className="text-red-400 hover:text-red-600 p-1 hover:bg-red-50 rounded"
+                                                        title="ลบใบลา"
+                                                    >
+                                                        <Trash2 size={16}/>
+                                                    </button>
+                                                )}
+                                            </div>
                                         </div>
                                         
                                         <div className="space-y-2 mb-4">
@@ -557,9 +592,20 @@ const LeaveSystem: React.FC<LeaveSystemProps> = ({ currentUser, allTeachers, cur
                                                     {getStatusBadge(req.status)}
                                                 </td>
                                                 <td className="px-4 py-3 text-right">
-                                                    <button onClick={() => { setSelectedRequest(req); setViewMode('PDF'); }} className="text-slate-400 hover:text-slate-600 p-1">
-                                                        <Printer size={16}/>
-                                                    </button>
+                                                    <div className="flex justify-end gap-2">
+                                                        <button onClick={() => { setSelectedRequest(req); setViewMode('PDF'); }} className="text-slate-400 hover:text-slate-600 p-1">
+                                                            <Printer size={16}/>
+                                                        </button>
+                                                        {(isDirector || isSystemAdmin) && (
+                                                            <button 
+                                                                onClick={(e) => handleDeleteRequest(e, req.id)}
+                                                                className="text-slate-400 hover:text-red-600 p-1"
+                                                                title="ลบข้อมูล"
+                                                            >
+                                                                <Trash2 size={16}/>
+                                                            </button>
+                                                        )}
+                                                    </div>
                                                 </td>
                                             </tr>
                                         ))}
@@ -690,125 +736,113 @@ const LeaveSystem: React.FC<LeaveSystemProps> = ({ currentUser, allTeachers, cur
             {/* --- PDF VIEW --- */}
             {viewMode === 'PDF' && selectedRequest && (
                 <div className={`flex flex-col lg:flex-row gap-6 ${isHighlighted ? 'ring-4 ring-emerald-300 rounded-xl transition-all duration-500' : ''}`}>
-                    <div className="flex-1 bg-slate-200 rounded-xl p-4 overflow-y-auto shadow-inner flex justify-center items-start min-h-[600px]">
-                        {isGeneratingPdf ? (
-                            <div className="flex flex-col items-center justify-center h-full text-slate-500 mt-20">
-                                <Loader className="animate-spin mb-4" size={40}/>
-                                <p>กำลังสร้างเอกสาร PDF อย่างเป็นทางการ...</p>
+                    
+                    {/* Left: PDF Preview (or Loader) */}
+                    <div className="flex-1 bg-slate-500 rounded-xl overflow-hidden shadow-2xl min-h-[500px] lg:min-h-[800px] relative">
+                         {isGeneratingPdf ? (
+                            <div className="absolute inset-0 flex items-center justify-center flex-col text-white">
+                                <Loader className="animate-spin mb-4" size={48}/>
+                                <p>กำลังสร้างเอกสาร PDF...</p>
                             </div>
-                        ) : pdfUrl ? (
-                            <iframe src={pdfUrl} className="w-full h-[800px] border rounded shadow-md bg-white"/>
-                        ) : (
-                            <div className="flex flex-col items-center justify-center h-full text-red-400 mt-20">
-                                <p>ไม่สามารถสร้างเอกสารได้</p>
-                            </div>
-                        )}
+                         ) : (
+                            <iframe 
+                                src={pdfUrl} 
+                                className="w-full h-full"
+                                title="Leave PDF Preview"
+                            />
+                         )}
                     </div>
 
-                    <div className="w-full lg:w-64 flex flex-col gap-4 print:hidden">
-                        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-                            <h4 className="font-bold text-slate-800 mb-2">การดำเนินการ</h4>
-                            <div className="text-xs text-slate-500 mb-4 bg-blue-50 p-2 rounded">
-                                ท่านสามารถสั่งพิมพ์หรือดาวน์โหลดเอกสารได้จากแถบเครื่องมือในหน้าต่าง PDF ด้านซ้าย
+                    {/* Right: Controls & Approval Panel */}
+                    <div className="w-full lg:w-80 space-y-4">
+                        <button onClick={() => setViewMode('LIST')} className="w-full py-2 bg-white text-slate-600 rounded-lg shadow-sm border border-slate-200 hover:bg-slate-50 font-bold flex items-center justify-center gap-2">
+                            <ArrowLeft size={18}/> ย้อนกลับ
+                        </button>
+                        
+                        {/* Approval Panel (Only for Director & Pending) */}
+                        {canApprove && selectedRequest.status === 'Pending' && (
+                            <div className="bg-blue-50 p-4 rounded-xl border border-blue-200 shadow-sm animate-pulse-slow">
+                                <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2">
+                                    <UserCheck size={20}/> ส่วนพิจารณา (ผอ.)
+                                </h4>
+                                <p className="text-xs text-blue-600 mb-4">
+                                    เมื่อกดอนุมัติ ระบบจะลงนามลายเซ็นดิจิทัลของคุณลงในแบบฟอร์มทันที
+                                </p>
+                                <div className="space-y-2">
+                                    <button 
+                                        onClick={() => handleDirectorApprove(selectedRequest, true)}
+                                        disabled={isProcessingApproval}
+                                        className="w-full py-3 bg-green-600 text-white rounded-lg shadow-md hover:bg-green-700 font-bold flex items-center justify-center gap-2 disabled:opacity-50"
+                                    >
+                                        {isProcessingApproval ? <Loader className="animate-spin"/> : <CheckCircle size={20}/>}
+                                        อนุมัติ / อนุญาต
+                                    </button>
+                                    <button 
+                                        onClick={() => handleDirectorApprove(selectedRequest, false)}
+                                        disabled={isProcessingApproval}
+                                        className="w-full py-3 bg-red-100 text-red-700 border border-red-200 rounded-lg hover:bg-red-200 font-bold flex items-center justify-center gap-2"
+                                    >
+                                        <XCircle size={20}/> ไม่อนุมัติ
+                                    </button>
+                                </div>
                             </div>
-                            {selectedRequest.evidenceUrl && (
-                                <button onClick={() => window.open(selectedRequest.evidenceUrl, '_blank')} className="w-full mb-2 py-2 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700">
-                                    <Paperclip size={16}/> ดูเอกสารแนบ (หลักฐาน)
-                                </button>
-                            )}
-                            <button onClick={() => setViewMode('LIST')} className="w-full py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200">
-                                ปิดหน้าต่าง
-                            </button>
+                        )}
+                        
+                        {/* Download / Status Info */}
+                         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                            <h4 className="font-bold text-slate-800 mb-3">ข้อมูลเอกสาร</h4>
+                            <div className="space-y-3 text-sm">
+                                <div className="flex justify-between">
+                                    <span className="text-slate-500">สถานะ</span>
+                                    {getStatusBadge(selectedRequest.status)}
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-slate-500">วันที่ยื่น</span>
+                                    <span>{getThaiDate(selectedRequest.createdAt || '')}</span>
+                                </div>
+                                
+                                {selectedRequest.evidenceUrl && (
+                                     <a 
+                                        href={selectedRequest.evidenceUrl} 
+                                        target="_blank" 
+                                        rel="noreferrer"
+                                        className="block mt-4 text-center py-2 bg-slate-100 text-slate-700 rounded border border-slate-200 hover:bg-slate-200 font-bold text-xs"
+                                    >
+                                        ดูเอกสารแนบ (เช่น ใบรับรองแพทย์)
+                                    </a>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>
             )}
-
-            {/* --- MODAL: DIRECTOR APPROVE (WITH LOADING EFFECT) --- */}
-            {canApprove && selectedRequest && viewMode === 'LIST' && selectedRequest.status === 'Pending' && (
-                <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-                    <div className={`bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden animate-slide-up relative ${isHighlighted ? 'ring-4 ring-blue-300 transition-all duration-500' : ''}`}>
-                        
-                        {/* Loading Overlay */}
-                        {isProcessingApproval && (
-                            <div className="absolute inset-0 z-50 bg-white/95 flex items-center justify-center flex-col text-center p-6">
-                                <div className="relative mb-6">
-                                    <div className="w-16 h-16 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
-                                    <FileText className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-blue-600" size={20}/>
-                                </div>
-                                <h3 className="text-xl font-bold text-slate-800 mb-2">กำลังสร้างเอกสารใบลาเพื่ออนุมัติ...</h3>
-                                <p className="text-slate-500 text-sm">ระบบกำลังประทับตราลายเซ็นและบันทึกข้อมูลลงฐานข้อมูล</p>
-                            </div>
-                        )}
-
-                        <div className="bg-blue-600 text-white p-4 font-bold text-lg flex items-center gap-2">
-                             <UserCheck size={24}/> พิจารณาคำขออนุญาต
-                        </div>
-                        <div className="p-6">
-                            <div className="flex items-center gap-4 mb-6">
-                                <div className="w-14 h-14 bg-slate-100 rounded-full flex items-center justify-center text-slate-400">
-                                    <User size={32}/>
-                                </div>
-                                <div>
-                                    <h4 className="font-bold text-xl text-slate-800">{selectedRequest.teacherName}</h4>
-                                    <p className="text-slate-500 text-sm">{selectedRequest.teacherPosition || 'ครู'}</p>
-                                </div>
-                            </div>
-
-                            <div className="space-y-3 mb-6">
-                                <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
-                                    <span className="text-xs text-slate-500 uppercase font-bold">ประเภทการลา</span>
-                                    <div className="font-bold text-blue-700 text-lg">{getLeaveTypeName(selectedRequest.type)}</div>
-                                </div>
-                                <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
-                                    <span className="text-xs text-slate-500 uppercase font-bold">เหตุผล</span>
-                                    <div className="text-slate-700">{selectedRequest.reason}</div>
-                                </div>
-                                <div className="flex gap-4">
-                                    <div className="flex-1">
-                                        <span className="text-xs text-slate-500">เริ่มวันที่</span>
-                                        <div className="font-bold">{getThaiDate(selectedRequest.startDate)}</div>
-                                    </div>
-                                    <div className="flex-1">
-                                        <span className="text-xs text-slate-500">ถึงวันที่</span>
-                                        <div className="font-bold">{getThaiDate(selectedRequest.endDate)}</div>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            {selectedRequest.evidenceUrl && (
-                                <a 
-                                    href={selectedRequest.evidenceUrl} 
-                                    target="_blank" 
-                                    rel="noreferrer"
-                                    className="block mb-6 text-blue-600 text-sm hover:underline flex items-center gap-1 bg-blue-50 p-2 rounded-lg border border-blue-100"
-                                >
-                                    <Paperclip size={16}/> มีเอกสารแนบ (คลิกเพื่อดูหลักฐาน)
-                                </a>
-                            )}
-                            
-                            <div className="flex gap-3 mt-4">
-                                <button 
-                                    onClick={() => handleDirectorApprove(selectedRequest, false)} 
-                                    disabled={isProcessingApproval}
-                                    className="flex-1 py-3 border border-red-200 text-red-600 rounded-xl hover:bg-red-50 font-bold disabled:opacity-50"
-                                >
-                                    ไม่อนุมัติ
-                                </button>
-                                <button 
-                                    onClick={() => handleDirectorApprove(selectedRequest, true)} 
-                                    disabled={isProcessingApproval}
-                                    className="flex-1 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-bold shadow-md shadow-blue-200 flex items-center justify-center gap-2 disabled:opacity-50"
-                                >
-                                    {isProcessingApproval ? 'กำลังประมวลผล...' : 'อนุมัติ / ลงนาม'}
-                                </button>
-                            </div>
-                            <button onClick={() => setSelectedRequest(null)} disabled={isProcessingApproval} className="w-full mt-4 text-sm text-slate-400 hover:text-slate-600 py-2">
-                                ปิดหน้าต่าง
-                            </button>
-                        </div>
-                    </div>
-                </div>
+            
+            {/* Warning Modal (Off Campus) */}
+            {showWarningModal && (
+                 <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm">
+                     <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl animate-scale-up">
+                         <div className="text-center mb-4">
+                             <div className="w-16 h-16 bg-yellow-100 text-yellow-600 rounded-full flex items-center justify-center mx-auto mb-3">
+                                 <Clock size={32}/>
+                             </div>
+                             <h3 className="text-xl font-bold text-slate-800">แจ้งเตือนการออกนอกบริเวณ</h3>
+                             <p className="text-slate-500 mt-2">
+                                 เดือนนี้ท่านได้ขออนุญาตออกนอกสถานศึกษาไปแล้ว <strong className="text-red-600 text-lg">{offCampusCount}</strong> ครั้ง
+                             </p>
+                         </div>
+                         <div className="bg-slate-50 p-3 rounded-lg text-xs text-slate-500 mb-6 border">
+                             ตามระเบียบโรงเรียน หากออกนอกบริเวณเกินจำนวนที่กำหนด อาจมีผลต่อการพิจารณาความดีความชอบ
+                         </div>
+                         <div className="flex gap-3">
+                             <button onClick={() => setShowWarningModal(false)} className="flex-1 py-2 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg font-bold">
+                                 ยกเลิก
+                             </button>
+                             <button onClick={submitRequest} className="flex-1 py-2 bg-yellow-500 text-white hover:bg-yellow-600 rounded-lg font-bold">
+                                 ยืนยันส่งใบลา
+                             </button>
+                         </div>
+                     </div>
+                 </div>
             )}
         </div>
     );
