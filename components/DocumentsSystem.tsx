@@ -769,6 +769,16 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
         }
     };
 
+    // Helper for Thai Priority Label
+    const getPriorityLabel = (priority: string) => {
+        switch (priority) {
+            case 'Critical': return 'ด่วนที่สุด';
+            case 'Urgent': return 'ด่วน';
+            case 'Normal': return 'ปกติ';
+            default: return priority;
+        }
+    };
+
     // --- Pagination Logic ---
     const totalPages = Math.ceil(filteredDocs.length / ITEMS_PER_PAGE);
     const displayedDocs = filteredDocs.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
@@ -831,7 +841,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                                                         {isOrder ? 'เลขที่คำสั่ง' : 'รับที่'}: {doc.bookNumber}
                                                     </span>
                                                     <span className={`px-2 py-0.5 rounded text-xs font-semibold border ${getPriorityColor(doc.priority)}`}>
-                                                        {doc.priority}
+                                                        {getPriorityLabel(doc.priority)}
                                                     </span>
                                                     {isUnread && (
                                                         <span className="bg-red-600 text-white text-[10px] px-2 py-1 rounded-full animate-pulse font-bold shadow-sm">
@@ -1300,7 +1310,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                                  <span className="text-slate-500 text-xs">ความเร่งด่วน</span>
                                  <div>
                                      <span className={`px-2 py-0.5 rounded text-xs border ${getPriorityColor(selectedDoc.priority)}`}>
-                                        {selectedDoc.priority}
+                                        {getPriorityLabel(selectedDoc.priority)}
                                      </span>
                                  </div>
                              </div>

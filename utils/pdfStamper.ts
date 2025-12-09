@@ -97,9 +97,9 @@ export const stampReceiveNumber = async ({ fileBase64, bookNumber, date, time, s
     const { width, height } = firstPage.getSize();
 
     const fontSize = 14; 
-    const lineHeight = 14; 
+    const lineHeight = 18; // Increased from 14 for better spacing
     const boxWidth = 160; 
-    const boxHeight = 75; 
+    const boxHeight = 85; // Increased from 75 to fit taller lines
     const margin = 20;
     
     const x = width - boxWidth - margin;
@@ -274,18 +274,8 @@ export const stampPdfDocument = async ({
     const schoolWidth = thaiFont.widthOfTextAtSize(schoolText, fontSize);
     targetPdfPage.drawText(schoolText, { x: centerX - (schoolWidth / 2), y: footerY, size: fontSize, font: thaiFont, color: rgb(0, 0, 0) });
     
-    if (schoolLogoBase64) {
-        try {
-            const logoBytes = dataURItoUint8Array(schoolLogoBase64);
-            let logoImage;
-            if(schoolLogoBase64.includes('png')) logoImage = await pdfDoc.embedPng(logoBytes);
-            else logoImage = await pdfDoc.embedJpg(logoBytes);
-            const logoDim = logoImage.scaleToFit(30, 30);
-            const logoY = footerY + lineHeight; 
-            targetPdfPage.drawImage(logoImage, { x: centerX - (logoDim.width / 2), y: logoY, width: logoDim.width, height: logoDim.height });
-            footerY += (logoDim.height + 5);
-        } catch(e) { footerY += lineHeight; }
-    } else { footerY += lineHeight; }
+    // REMOVED LOGO DRAWING FROM DIRECTOR COMMAND AS REQUESTED
+    footerY += lineHeight;
 
     const nameText = `( ${directorName} )`;
     const nameWidth = thaiFont.widthOfTextAtSize(nameText, fontSize);

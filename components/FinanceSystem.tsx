@@ -6,7 +6,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, L
 import { TrendingUp, TrendingDown, DollarSign, Plus, Wallet, FileText, ArrowRight, PlusCircle, LayoutGrid, List, ArrowLeft, Loader, Database, ServerOff, Edit2, Trash2, X, Save, ShieldAlert, Eye, Printer, Upload, Calendar, Search, ChevronLeft, ChevronRight, HardDrive, Cloud } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { db, isConfigured } from '../firebaseConfig';
-// import { collection, query, where, getDocs, addDoc, updateDoc, doc, deleteDoc } from 'firebase/firestore'; // Removed due to import errors
+import { collection, query, where, getDocs, setDoc, updateDoc, doc, deleteDoc } from 'firebase/firestore';
 
 // Thai Date Helper
 const getThaiDate = (dateStr: string) => {
@@ -89,46 +89,62 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
     const [newAccount, setNewAccount] = useState({ name: '' });
 
     // --- HYBRID DATA LOADING ---
-    // Budget -> Firebase (Disabled, now Mock)
-    // NonBudget -> LocalStorage
     useEffect(() => {
         const loadData = async () => {
             setIsLoadingData(true);
             
-            // 1. Fetch NON-BUDGET from LocalStorage
-            let localNonBudgetAccounts: FinanceAccount[] = [];
-            let localNonBudgetTrans: Transaction[] = [];
+            // 1. Fetch from LocalStorage (Fallback)
+            let localAccounts: FinanceAccount[] = [];
+            let localTrans: Transaction[] = [];
             try {
                 const savedAcc = localStorage.getItem('schoolos_finance_accounts');
                 const savedTx = localStorage.getItem('schoolos_finance_transactions');
-                
-                const allLocalAcc = savedAcc ? JSON.parse(savedAcc) : [];
-                const allLocalTx = savedTx ? JSON.parse(savedTx) : [];
-
-                // Filter only NonBudget items from local storage
-                localNonBudgetAccounts = allLocalAcc.filter((a: FinanceAccount) => a.type === 'NonBudget');
-                const localAccIds = localNonBudgetAccounts.map(a => a.id);
-                localNonBudgetTrans = allLocalTx.filter((t: Transaction) => localAccIds.includes(t.accountId));
+                if (savedAcc) localAccounts = JSON.parse(savedAcc);
+                if (savedTx) localTrans = JSON.parse(savedTx);
             } catch (e) {
                 console.error("Local Load Error", e);
             }
 
-            // 2. Fetch BUDGET from Firebase (Disabled) -> Use Mock
-            let firebaseBudgetAccounts: FinanceAccount[] = [];
-            let firebaseBudgetTrans: Transaction[] = [];
+            // 2. Fetch from Firebase (If Configured)
+            if (isConfigured && db) {
+                try {
+                    // Fetch Accounts
+                    const accQ = query(collection(db, "finance_accounts"), where("schoolId", "==", currentUser.schoolId));
+                    const accSnap = await getDocs(accQ);
+                    const dbAccounts = accSnap.docs.map(doc => doc.data() as FinanceAccount);
 
-            // if (isConfigured && db) {
-            //     // Logic removed to fix build error
-            // } else {
-                // Not Configured -> Use Mock for Budget to visualize UI
-                firebaseBudgetAccounts = MOCK_ACCOUNTS.filter(a => a.type === 'Budget');
-                const budgetAccIds = firebaseBudgetAccounts.map(a => a.id);
-                firebaseBudgetTrans = MOCK_TRANSACTIONS.filter(t => budgetAccIds.includes(t.accountId));
-            // }
+                    // Fetch Transactions
+                    const transQ = query(collection(db, "finance_transactions"), where("schoolId", "==", currentUser.schoolId));
+                    const transSnap = await getDocs(transQ);
+                    const dbTrans = transSnap.docs.map(doc => doc.data() as Transaction);
 
-            // 3. Merge Data
-            setAccounts([...firebaseBudgetAccounts, ...localNonBudgetAccounts]);
-            setTransactions([...firebaseBudgetTrans, ...localNonBudgetTrans]);
+                    // Use DB data if available, otherwise fallback/merge (DB takes precedence)
+                    if (dbAccounts.length > 0 || dbTrans.length > 0) {
+                        setAccounts(dbAccounts);
+                        setTransactions(dbTrans);
+                    } else {
+                        // First time online or empty DB? Use local or Mock
+                        if (localAccounts.length > 0) {
+                             setAccounts(localAccounts);
+                             setTransactions(localTrans);
+                        } else {
+                            // Fallback to Mock if absolutely nothing
+                            const mockBudget = MOCK_ACCOUNTS.filter(a => a.schoolId === currentUser.schoolId || a.type === 'Budget'); // Filter somewhat
+                             setAccounts(mockBudget);
+                             setTransactions(MOCK_TRANSACTIONS.filter(t => t.schoolId === currentUser.schoolId));
+                        }
+                    }
+                } catch (err) {
+                    console.error("Firebase Finance Fetch Error:", err);
+                    setAccounts(localAccounts.length ? localAccounts : MOCK_ACCOUNTS);
+                    setTransactions(localTrans.length ? localTrans : MOCK_TRANSACTIONS);
+                }
+            } else {
+                // Offline Mode
+                setAccounts(localAccounts.length ? localAccounts : MOCK_ACCOUNTS);
+                setTransactions(localTrans.length ? localTrans : MOCK_TRANSACTIONS);
+            }
+
             setIsLoadingData(false);
         };
 
@@ -136,12 +152,18 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
     }, [currentUser.schoolId]);
 
     // Helper to Save Data (Router: Local vs Firebase)
-    const handleSaveTransaction = async (transactionData: any, accountType: 'Budget' | 'NonBudget') => {
-        if (accountType === 'Budget' && isConfigured && db) {
-            // Firebase logic removed
-            return false;
+    const handleSaveTransaction = async (transactionData: any) => {
+        if (isConfigured && db) {
+            try {
+                await setDoc(doc(db, "finance_transactions", transactionData.id), transactionData);
+                return true;
+            } catch (e) {
+                console.error("Error saving transaction to Firebase:", e);
+                alert("เกิดข้อผิดพลาดในการบันทึกข้อมูลออนไลน์");
+                return false;
+            }
         } else {
-            // Save to LocalStorage (Non-Budget OR Offline Budget)
+            // Save to LocalStorage
             const currentAllTrans = JSON.parse(localStorage.getItem('schoolos_finance_transactions') || '[]');
             const updatedAllTrans = [...currentAllTrans, transactionData];
             localStorage.setItem('schoolos_finance_transactions', JSON.stringify(updatedAllTrans));
@@ -150,9 +172,15 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
     };
 
     const handleSaveAccount = async (accountData: any) => {
-        if (accountData.type === 'Budget' && isConfigured && db) {
-            // Firebase logic removed
-            return false;
+        if (isConfigured && db) {
+            try {
+                await setDoc(doc(db, "finance_accounts", accountData.id), accountData);
+                return true;
+            } catch (e) {
+                console.error("Error saving account to Firebase:", e);
+                alert("เกิดข้อผิดพลาดในการบันทึกบัญชีออนไลน์");
+                return false;
+            }
         } else {
             // LocalStorage
             const currentAllAcc = JSON.parse(localStorage.getItem('schoolos_finance_accounts') || '[]');
@@ -166,12 +194,18 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
         e.preventDefault();
         if (!editingAccount || !newAccountName) return;
 
-        // Optimistic Update
+        // Optimistic Update UI
         const updatedAccounts = accounts.map(a => a.id === editingAccount.id ? { ...a, name: newAccountName } : a);
         setAccounts(updatedAccounts);
 
-        if (editingAccount.type === 'Budget' && isConfigured && db) {
-            // Firebase logic removed
+        if (isConfigured && db) {
+            try {
+                const accRef = doc(db, "finance_accounts", editingAccount.id);
+                await updateDoc(accRef, { name: newAccountName });
+            } catch (e) {
+                console.error("Firebase Update Error", e);
+                alert("การบันทึกแก้ไขล้มเหลว");
+            }
         } else {
             // LocalStorage
             const allLocal = JSON.parse(localStorage.getItem('schoolos_finance_accounts') || '[]');
@@ -238,13 +272,7 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
 
         const success = await handleSaveAccount(created);
         if (success) {
-            // Force reload or optimistically update
-            if (activeTab === 'Budget' && isConfigured && db) {
-                 // Reload to get real ID? For now optimistic append
-                 setAccounts([...accounts, created]); 
-            } else {
-                 setAccounts([...accounts, created]);
-            }
+             setAccounts([...accounts, created]);
         }
 
         setNewAccount({ name: '' });
@@ -255,12 +283,10 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
         e.preventDefault();
         
         let targetAccountId = '';
-        let targetAccountType: 'Budget' | 'NonBudget' = activeTab;
 
         // If an account is explicitly selected, use it.
         if (selectedAccount) {
             targetAccountId = selectedAccount.id;
-            targetAccountType = selectedAccount.type;
         } else if (activeTab === 'NonBudget') {
             // Find NonBudget Account
             const nbAcc = accounts.find(a => a.type === 'NonBudget');
@@ -292,7 +318,7 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
             type: newTrans.type
         };
 
-        const success = await handleSaveTransaction(created, targetAccountType);
+        const success = await handleSaveTransaction(created);
         if (success) {
             setTransactions([...transactions, created]);
             alert("บันทึกรายการเรียบร้อยแล้ว");
@@ -308,11 +334,9 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
 
         // Determine Target Account
         let targetAccountId = '';
-        let targetAccountType: 'Budget' | 'NonBudget' = activeTab;
 
         if (selectedAccount) {
             targetAccountId = selectedAccount.id;
-            targetAccountType = selectedAccount.type;
         } else if (activeTab === 'NonBudget') {
              const nbAcc = accounts.find(a => a.type === 'NonBudget');
              if (nbAcc) targetAccountId = nbAcc.id;
@@ -369,9 +393,17 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
 
                 if (batchTransactions.length > 0) {
                     // Batch Save
-                    if (targetAccountType === 'Budget' && isConfigured && db) {
-                        // Firebase logic removed
+                    if (isConfigured && db) {
+                        // Firebase Batch Import (Sequentially for simplicity)
+                        try {
+                            const promises = batchTransactions.map(t => setDoc(doc(db, "finance_transactions", t.id), t));
+                            await Promise.all(promises);
+                        } catch (err) {
+                            console.error("Batch Import Failed", err);
+                            alert("เกิดข้อผิดพลาดในการบันทึกข้อมูลบางส่วนลงฐานข้อมูล");
+                        }
                     } else {
+                         // Local Storage
                          const currentAllTrans = JSON.parse(localStorage.getItem('schoolos_finance_transactions') || '[]');
                          localStorage.setItem('schoolos_finance_transactions', JSON.stringify([...currentAllTrans, ...batchTransactions]));
                     }
@@ -402,12 +434,17 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
         e.preventDefault();
         if (!editingTransaction) return;
 
-        // Check if transaction belongs to a Budget Account
-        const acc = accounts.find(a => a.id === editingTransaction.accountId);
-        const isBudget = acc?.type === 'Budget';
+        // UI Update
+        const updatedTrans = transactions.map(t => t.id === editingTransaction.id ? editingTransaction : t);
+        setTransactions(updatedTrans);
 
-        if (isBudget && isConfigured && db) {
-            // Firebase logic removed
+        if (isConfigured && db) {
+             try {
+                const transRef = doc(db, "finance_transactions", editingTransaction.id);
+                await updateDoc(transRef, { ...editingTransaction });
+             } catch (e) {
+                 console.error("Update Trans Error", e);
+             }
         } else {
             // Local
             const currentAllTrans = JSON.parse(localStorage.getItem('schoolos_finance_transactions') || '[]');
@@ -415,8 +452,6 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
             localStorage.setItem('schoolos_finance_transactions', JSON.stringify(updated));
         }
 
-        const updatedTrans = transactions.map(t => t.id === editingTransaction.id ? editingTransaction : t);
-        setTransactions(updatedTrans);
         setShowEditModal(false);
         setEditingTransaction(null);
     };
@@ -425,12 +460,16 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
         if (!editingTransaction) return;
         if (!confirm("ยืนยันการลบรายการนี้?")) return;
 
-         // Check if transaction belongs to a Budget Account
-        const acc = accounts.find(a => a.id === editingTransaction.accountId);
-        const isBudget = acc?.type === 'Budget';
+         // UI Update
+         const updatedTrans = transactions.filter(t => t.id !== editingTransaction.id);
+         setTransactions(updatedTrans);
 
-        if (isBudget && isConfigured && db) {
-            // Firebase logic removed
+        if (isConfigured && db) {
+            try {
+                await deleteDoc(doc(db, "finance_transactions", editingTransaction.id));
+            } catch (e) {
+                console.error("Delete Trans Error", e);
+            }
         } else {
             // Local
             const currentAllTrans = JSON.parse(localStorage.getItem('schoolos_finance_transactions') || '[]');
@@ -438,8 +477,6 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
             localStorage.setItem('schoolos_finance_transactions', JSON.stringify(updated));
         }
 
-         const updatedTrans = transactions.filter(t => t.id !== editingTransaction.id);
-         setTransactions(updatedTrans);
          setShowEditModal(false);
          setEditingTransaction(null);
     };
@@ -480,7 +517,7 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
                 <div className="space-y-4">
                      <div className="flex items-center gap-2 text-sm text-slate-500 bg-orange-50 p-2 rounded-lg w-fit">
                         {isConfigured ? <Cloud size={14} className="text-orange-600"/> : <ServerOff size={14} className="text-red-500"/>}
-                        {isConfigured ? 'เชื่อมต่อฐานข้อมูล Firebase (Budget)' : 'Offline Mock Data (Budget)'}
+                        {isConfigured ? 'เชื่อมต่อฐานข้อมูล Firebase (Online)' : 'Offline Mode (Local)'}
                      </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -604,9 +641,9 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
                             <div className="flex items-center gap-2 text-sm text-slate-500">
                                 <span>{activeTab === 'Budget' ? 'บัญชีเงินงบประมาณ' : 'บัญชีเงินรายได้สถานศึกษา'}</span>
                                 <span className="text-slate-300">|</span>
-                                <span className={`flex items-center gap-1 font-bold px-2 rounded-full ${activeTab === 'Budget' && isConfigured ? 'bg-orange-50 text-orange-600' : 'bg-green-50 text-green-600'}`}>
-                                    {activeTab === 'Budget' && isConfigured ? <Cloud size={12}/> : <HardDrive size={12}/>}
-                                    {activeTab === 'Budget' && isConfigured ? 'Firebase DB' : 'Local DB'}
+                                <span className={`flex items-center gap-1 font-bold px-2 rounded-full ${isConfigured ? 'bg-orange-50 text-orange-600' : 'bg-red-50 text-red-600'}`}>
+                                    {isConfigured ? <Cloud size={12}/> : <HardDrive size={12}/>}
+                                    {isConfigured ? 'Online' : 'Offline'}
                                 </span>
                             </div>
                         </div>
@@ -839,7 +876,7 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
                     </div>
                 </div>
 
-                <div className="bg-white shadow-lg p-10 mx-auto max-w-[210mm] min-h-[297mm] print:shadow-none print:w-full print:p-0 print:m-0 text-slate-900">
+                <div className="bg-white shadow-lg p-10 mx-auto max-w-[210mm] min-h-[297mm] print:shadow-none print:w-full print:p-[2.5cm] print:m-0 text-slate-900">
                     <div className="text-center mb-6">
                         <h2 className="text-xl font-bold mb-1">รายงานการรับ - จ่ายเงิน</h2>
                         <h3 className="text-lg font-bold text-slate-700">{targetAcc.name}</h3>
@@ -892,13 +929,13 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
                         </tfoot>
                     </table>
 
-                    <div className="mt-16 flex justify-around page-break-inside-avoid">
-                        <div className="text-center w-1/3">
+                    <div className="mt-16 flex justify-between px-10 page-break-inside-avoid">
+                        <div className="text-center w-5/12 whitespace-nowrap">
                             <p className="mb-8">ลงชื่อ..........................................................ผู้ทำรายการ</p>
                             <p className="font-bold">({officerName})</p>
                             <p className="mt-1">ตำแหน่ง เจ้าหน้าที่การเงิน</p>
                         </div>
-                        <div className="text-center w-1/3">
+                        <div className="text-center w-5/12 whitespace-nowrap">
                             <p className="mb-8">ลงชื่อ..........................................................ผู้ตรวจสอบ</p>
                             <p className="font-bold">({directorName})</p>
                             <p className="mt-1">ตำแหน่ง ผู้อำนวยการโรงเรียน</p>
