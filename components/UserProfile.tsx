@@ -3,8 +3,6 @@ import React, { useState } from 'react';
 import { Teacher } from '../types';
 import { ACADEMIC_POSITIONS } from '../constants';
 import { User, Lock, Save, UploadCloud, FileSignature, Briefcase, Eye, EyeOff } from 'lucide-react';
-import { db, isConfigured } from '../firebaseConfig';
-import { doc, updateDoc } from 'firebase/firestore';
 
 interface UserProfileProps {
     currentUser: Teacher;
@@ -28,159 +26,150 @@ const UserProfile: React.FC<UserProfileProps> = ({ currentUser, onUpdateUser }) 
             const reader = new FileReader();
             reader.onload = () => {
                 if (reader.result) {
-                    const base64 = reader.result as string;
-                    setSignaturePreview(base64);
+                    setSignaturePreview(reader.result as string);
                 }
             };
             reader.readAsDataURL(file);
         }
     };
 
-    const handleSave = async (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setIsSaving(true);
-
-        const updatedUser: Teacher = {
+        
+        // Update Object
+        const updated: Teacher = {
             ...currentUser,
             name: formData.name,
             position: formData.position,
             password: formData.password,
             signatureBase64: signaturePreview
+            // Telegram ID is preserved but not editable here
         };
 
-        if (isConfigured && db) {
-            try {
-                const userRef = doc(db, "teachers", currentUser.id);
-                await updateDoc(userRef, {
-                    name: formData.name,
-                    position: formData.position,
-                    password: formData.password,
-                    signatureBase64: signaturePreview
-                });
-                alert("บันทึกข้อมูลส่วนตัวเรียบร้อยแล้ว");
-                onUpdateUser(updatedUser);
-            } catch (e) {
-                console.error("Update profile error", e);
-                alert("เกิดข้อผิดพลาดในการบันทึก");
-            }
-        } else {
-            // Mock mode
-            alert("บันทึกข้อมูลเรียบร้อย (Offline Mode)");
-            onUpdateUser(updatedUser);
-        }
-        setIsSaving(false);
+        // Mock Save
+        setTimeout(() => {
+            onUpdateUser(updated);
+            alert("บันทึกข้อมูลเรียบร้อยแล้ว");
+            setIsSaving(false);
+        }, 800);
     };
 
     return (
-        <div className="max-w-2xl mx-auto space-y-6">
-            <div className="bg-slate-800 text-white p-6 rounded-xl flex items-center gap-4">
-                <div className="w-16 h-16 bg-blue-500 rounded-full flex items-center justify-center text-2xl font-bold border-2 border-white shadow-lg">
-                    {currentUser.name[0]}
+        <div className="max-w-2xl mx-auto space-y-6 animate-fade-in pb-20">
+             <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center gap-4">
+                <div className="w-16 h-16 bg-purple-100 text-purple-600 rounded-full flex items-center justify-center font-bold text-2xl">
+                    {formData.name[0]}
                 </div>
                 <div>
-                    <h2 className="text-2xl font-bold">{currentUser.name}</h2>
-                    <p className="text-slate-300">{currentUser.position}</p>
+                    <h2 className="text-xl font-bold text-slate-800">ข้อมูลส่วนตัว</h2>
+                    <p className="text-slate-500 text-sm">จัดการข้อมูลผู้ใช้งานและลายเซ็นดิจิทัล</p>
                 </div>
-            </div>
+             </div>
 
-            <form onSubmit={handleSave} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-6 animate-slide-up">
-                <div className="flex items-center gap-2 border-b pb-2 mb-4">
-                    <User className="text-blue-600" size={24}/>
-                    <h3 className="font-bold text-lg text-slate-800">แก้ไขข้อมูลส่วนตัว</h3>
-                </div>
-
+             <form onSubmit={handleSubmit} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-1">ชื่อ - นามสกุล</label>
+                        <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
+                             <User size={16}/> ชื่อ - นามสกุล
+                        </label>
                         <input 
                             type="text" 
+                            required
                             value={formData.name}
                             onChange={e => setFormData({...formData, name: e.target.value})}
-                            className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                            className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-bold text-slate-700 mb-1">เลขบัตรประชาชน (ID)</label>
+                        <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
+                             <Briefcase size={16}/> ตำแหน่ง
+                        </label>
+                        <select 
+                            value={formData.position} 
+                            onChange={e => setFormData({...formData, position: e.target.value})}
+                            className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
+                        >
+                             {ACADEMIC_POSITIONS.map(p => (
+                                <option key={p} value={p}>{p}</option>
+                             ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-2">เลขบัตรประชาชน (ID)</label>
                         <input 
                             type="text" 
-                            value={formData.id}
                             disabled
+                            value={formData.id}
                             className="w-full px-3 py-2 border rounded-lg bg-slate-100 text-slate-500 cursor-not-allowed"
                         />
                     </div>
-                </div>
-
-                <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-1 flex items-center gap-2">
-                        <Briefcase size={16}/> ตำแหน่ง
-                    </label>
-                    <select 
-                        value={formData.position}
-                        onChange={e => setFormData({...formData, position: e.target.value})}
-                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                    >
-                        {ACADEMIC_POSITIONS.map(pos => (
-                            <option key={pos} value={pos}>{pos}</option>
-                        ))}
-                    </select>
-                </div>
-
-                <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-1 flex items-center gap-2">
-                        <Lock size={16}/> รหัสผ่าน
-                    </label>
-                    <div className="relative">
-                        <input 
-                            type={showPassword ? "text" : "password"}
-                            value={formData.password}
-                            onChange={e => setFormData({...formData, password: e.target.value})}
-                            className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                        />
-                        <button 
-                            type="button"
-                            onClick={() => setShowPassword(!showPassword)}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                        >
-                            {showPassword ? <EyeOff size={18}/> : <Eye size={18}/>}
-                        </button>
+                    <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
+                             <Lock size={16}/> รหัสผ่าน
+                        </label>
+                        <div className="relative">
+                            <input 
+                                type={showPassword ? "text" : "password"} 
+                                value={formData.password}
+                                onChange={e => setFormData({...formData, password: e.target.value})}
+                                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 outline-none"
+                            />
+                            <button 
+                                type="button" 
+                                onClick={() => setShowPassword(!showPassword)}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                            >
+                                {showPassword ? <EyeOff size={16}/> : <Eye size={16}/>}
+                            </button>
+                        </div>
                     </div>
                 </div>
 
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                    <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
-                        <FileSignature size={18} className="text-orange-600"/> ลายเซ็นดิจิทัล (สำคัญสำหรับใบลา)
+                <div className="border-t pt-6">
+                    <label className="block text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
+                        <FileSignature size={18}/> ลายเซ็นดิจิทัล (สำหรับลงนามเอกสาร)
                     </label>
                     
-                    <div className="flex flex-col md:flex-row gap-6 items-center">
-                        <div className="flex-1 w-full">
-                            <label className="cursor-pointer bg-white hover:bg-blue-50 w-full p-4 border-2 border-dashed border-slate-300 rounded-lg flex flex-col items-center justify-center gap-2 transition-all group">
-                                <UploadCloud size={32} className="text-slate-400 group-hover:text-blue-500"/>
-                                <span className="text-sm font-bold text-slate-600 group-hover:text-blue-600">คลิกเพื่ออัปโหลดไฟล์ภาพ</span>
-                                <span className="text-xs text-slate-400 text-center">แนะนำไฟล์ .PNG พื้นหลังโปร่งใส<br/>ขนาดประมาณ 300x100 px</span>
-                                <input type="file" accept="image/png,image/jpeg" onChange={handleSignatureUpload} className="hidden" />
-                            </label>
-                        </div>
-                        
-                        <div className="w-full md:w-48 h-24 border border-slate-300 bg-white rounded-lg flex items-center justify-center relative overflow-hidden">
+                    <div className="flex flex-col md:flex-row gap-6">
+                        <div className="w-full md:w-1/2 h-32 border-2 border-dashed border-slate-300 rounded-xl flex items-center justify-center bg-slate-50 overflow-hidden relative">
                             {signaturePreview ? (
-                                <img src={signaturePreview} alt="Signature" className="max-w-full max-h-full object-contain" />
+                                <img src={signaturePreview} className="max-h-full max-w-full object-contain" alt="Signature" />
                             ) : (
-                                <span className="text-xs text-slate-300 italic">ตัวอย่างลายเซ็น</span>
+                                <span className="text-slate-400 text-sm">ยังไม่มีลายเซ็น</span>
+                            )}
+                        </div>
+                        <div className="flex-1 flex flex-col justify-center gap-2">
+                            <p className="text-xs text-slate-500 mb-2">
+                                อัปโหลดรูปภาพลายเซ็น (พื้นหลังโปร่งใส .png ดีที่สุด) เพื่อใช้ในการอนุมัติเอกสารออนไลน์
+                            </p>
+                            <label className="cursor-pointer bg-purple-50 text-purple-700 border border-purple-200 px-4 py-2 rounded-lg font-bold flex items-center justify-center gap-2 hover:bg-purple-100 transition-colors">
+                                <UploadCloud size={20}/> เลือกรูปภาพ
+                                <input type="file" className="hidden" accept="image/*" onChange={handleSignatureUpload}/>
+                            </label>
+                            {signaturePreview && (
+                                <button 
+                                    type="button" 
+                                    onClick={() => setSignaturePreview('')}
+                                    className="text-red-500 text-sm hover:underline text-center"
+                                >
+                                    ลบลายเซ็น
+                                </button>
                             )}
                         </div>
                     </div>
                 </div>
 
-                <div className="pt-2">
+                <div className="flex justify-end pt-4">
                     <button 
                         type="submit" 
                         disabled={isSaving}
-                        className="w-full py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold shadow-lg flex items-center justify-center gap-2 disabled:opacity-50"
+                        className="bg-purple-600 text-white px-8 py-3 rounded-xl font-bold shadow-lg hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2"
                     >
-                        {isSaving ? 'กำลังบันทึก...' : <><Save size={20}/> บันทึกข้อมูล</>}
+                        {isSaving ? <span className="animate-spin">C</span> : <Save size={20}/>} บันทึกข้อมูล
                     </button>
                 </div>
-            </form>
+             </form>
         </div>
     );
 };

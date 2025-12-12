@@ -1,9 +1,10 @@
+
 import React, { useState, useEffect } from 'react';
 import { Teacher, TeacherRole, SystemConfig, School } from '../types';
-import { Users, UserPlus, Edit, Trash2, CheckSquare, Square, Save, X, Settings, Database, Link as LinkIcon, AlertCircle, UploadCloud, ImageIcon, MoveVertical, Maximize, Shield, MapPin, Target, Crosshair, Clock, Calendar, RefreshCw, UserCheck, ShieldCheck, ShieldAlert, LogOut } from 'lucide-react';
+import { Users, UserPlus, Edit, Trash2, CheckSquare, Square, Save, X, Settings, Database, Link as LinkIcon, AlertCircle, UploadCloud, ImageIcon, MoveVertical, Maximize, Shield, MapPin, Target, Crosshair, Clock, Calendar, RefreshCw, UserCheck, ShieldCheck, ShieldAlert, LogOut, Send } from 'lucide-react';
 import { db, isConfigured } from '../firebaseConfig';
-import { collection, doc, getDoc, setDoc } from 'firebase/firestore';
 import { ACADEMIC_POSITIONS } from '../constants';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 interface AdminUserManagementProps {
     teachers: Teacher[];
@@ -34,7 +35,7 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ teachers, onA
     const [isAdding, setIsAdding] = useState(false);
 
     // System Settings State
-    const [config, setConfig] = useState<SystemConfig>({ driveFolderId: '', scriptUrl: '', schoolName: '', directorSignatureBase64: '', directorSignatureScale: 1, directorSignatureYOffset: 0, schoolLogoBase64: '', officialGarudaBase64: '' });
+    const [config, setConfig] = useState<SystemConfig>({ driveFolderId: '', scriptUrl: '', schoolName: '', directorSignatureBase64: '', directorSignatureScale: 1, directorSignatureYOffset: 0, schoolLogoBase64: '', officialGarudaBase64: '', telegramBotToken: '' });
     const [isLoadingConfig, setIsLoadingConfig] = useState(false);
     
     // School Settings State (Local)
@@ -51,17 +52,17 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ teachers, onA
     // Load Config
     useEffect(() => {
         const fetchConfig = async () => {
-            if (isConfigured && db) {
-                try {
-                    const docRef = doc(db, "system_config", "settings");
-                    const docSnap = await getDoc(docRef);
-                    if (docSnap.exists()) {
-                        setConfig(docSnap.data() as SystemConfig);
-                    }
-                } catch (e) {
-                    console.error("Error fetching config", e);
-                }
-            }
+             if (isConfigured && db) {
+                 try {
+                     const docRef = doc(db, "system_config", "settings");
+                     const docSnap = await getDoc(docRef);
+                     if (docSnap.exists()) {
+                         setConfig(docSnap.data() as SystemConfig);
+                     }
+                 } catch (e) {
+                     console.error("Config fetch error", e);
+                 }
+             }
         };
         fetchConfig();
     }, []);
@@ -119,7 +120,7 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ teachers, onA
         try {
             if (isConfigured && db) {
                 await setDoc(doc(db, "system_config", "settings"), config);
-                alert("บันทึกการตั้งค่าลงฐานข้อมูลเรียบร้อยแล้ว");
+                alert("บันทึกการตั้งค่าเรียบร้อย");
             } else {
                 // Mock Save
                 setTimeout(() => {
@@ -316,6 +317,18 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ teachers, onA
                                                     placeholder="Reset Password"
                                                 />
                                             </div>
+                                            <div className="md:col-span-2">
+                                                <label className="block text-sm font-bold text-slate-700 mb-1 flex items-center gap-1">
+                                                    <Send size={14}/> Telegram Chat ID
+                                                </label>
+                                                <input 
+                                                    type="text" 
+                                                    value={editForm.telegramChatId || ''}
+                                                    onChange={e => setEditForm({...editForm, telegramChatId: e.target.value})}
+                                                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono"
+                                                    placeholder="กรอก Chat ID ของผู้ใช้งาน"
+                                                />
+                                            </div>
                                         </div>
 
                                         <div>
@@ -364,6 +377,11 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ teachers, onA
                                             <td className="px-4 py-3 font-medium text-slate-800">
                                                 {t.name}
                                                 <div className="text-xs text-slate-400 font-mono">{t.id}</div>
+                                                {t.telegramChatId && (
+                                                    <div className="text-[10px] text-blue-500 flex items-center gap-1 mt-0.5">
+                                                        <Send size={10}/> Telegram Connected
+                                                    </div>
+                                                )}
                                             </td>
                                             <td className="px-4 py-3 text-slate-600">{t.position}</td>
                                             <td className="px-4 py-3">
@@ -521,7 +539,27 @@ const AdminUserManagement: React.FC<AdminUserManagementProps> = ({ teachers, onA
                     <div className="space-y-6">
                         <div className="flex items-center gap-2 mb-4 border-b pb-4">
                             <Database className="text-purple-600"/>
-                            <h3 className="font-bold text-lg text-slate-800">ตั้งค่าระบบส่วนกลาง (Google Drive Integration)</h3>
+                            <h3 className="font-bold text-lg text-slate-800">ตั้งค่าระบบส่วนกลาง (Integration)</h3>
+                        </div>
+
+                        {/* Telegram Config */}
+                        <div className="bg-blue-50 p-6 rounded-xl border border-blue-200 mb-6">
+                            <h4 className="font-bold text-blue-800 mb-4 flex items-center gap-2">
+                                <Send size={20}/> การตั้งค่า Telegram Notification
+                            </h4>
+                            <div>
+                                <label className="block text-sm font-bold text-slate-700 mb-1">Telegram Bot Token (จาก @BotFather)</label>
+                                <input 
+                                    type="text" 
+                                    value={config.telegramBotToken || ''}
+                                    onChange={e => setConfig({...config, telegramBotToken: e.target.value})}
+                                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono text-xs"
+                                    placeholder="123456789:ABCDefGhIJKlmNoPQRstUvwxyz..."
+                                />
+                                <p className="text-xs text-blue-500 mt-2">
+                                    ใช้สำหรับส่งการแจ้งเตือนหนังสือราชการไปยังบุคลากรผ่าน Telegram
+                                </p>
+                            </div>
                         </div>
 
                         <div className="bg-purple-50 p-6 rounded-xl border border-purple-200 mb-6">

@@ -11,15 +11,17 @@ import UserProfile from './components/UserProfile';
 import LoginScreen from './components/LoginScreen';
 import FirstLoginSetup from './components/FirstLoginSetup';
 import SuperAdminDashboard from './components/SuperAdminDashboard';
-import { SystemView, Teacher, School, TeacherRole } from './types';
+import DirectorCalendar from './components/DirectorCalendar'; // Import Component
+import { SystemView, Teacher, School, TeacherRole, DirectorEvent, SystemConfig } from './types';
 import { 
     Activity, Users, Clock, FileText, CalendarRange, 
     Loader, Database, ServerOff, Home, LogOut, 
-    Settings, ChevronLeft, Building2, LayoutGrid, Bell, UserCircle, ExternalLink, X
+    Settings, ChevronLeft, Building2, LayoutGrid, Bell, UserCircle, ExternalLink, X, Calendar
 } from 'lucide-react';
 import { MOCK_DOCUMENTS, MOCK_LEAVE_REQUESTS, MOCK_TRANSACTIONS, MOCK_TEACHERS, MOCK_SCHOOLS } from './constants';
 import { db, isConfigured } from './firebaseConfig';
-import { collection, onSnapshot, setDoc, doc, deleteDoc, query, where, QuerySnapshot, DocumentData } from 'firebase/firestore';
+import { collection, onSnapshot, setDoc, doc, deleteDoc, query, where, QuerySnapshot, DocumentData, getDocs, updateDoc, getDoc } from 'firebase/firestore';
+import { sendTelegramMessage } from './utils/telegram';
 
 // Keys for LocalStorage
 const SESSION_KEY = 'schoolos_session_v1';
@@ -48,6 +50,7 @@ const App: React.FC = () => {
 
     // Deep Link State (For clicking notification)
     const [focusItem, setFocusItem] = useState<{ view: SystemView, id: string } | null>(null);
+    const [pendingDeepLink, setPendingDeepLink] = useState<{ view: SystemView, id: string } | null>(null);
 
     // --- DATA SYNCHRONIZATION (FIREBASE) ---
     useEffect(() => {
@@ -106,9 +109,11 @@ const App: React.FC = () => {
         };
     }, []);
 
-    // Check LocalStorage on Mount
+    // Check LocalStorage on Mount AND Handle URL Deep Linking
     useEffect(() => {
         if (!isDataLoaded) return;
+        
+        // 1. Restore Session
         const storedSession = localStorage.getItem(SESSION_KEY);
         if (storedSession) {
             try {
@@ -123,8 +128,114 @@ const App: React.FC = () => {
                 localStorage.removeItem(SESSION_KEY);
             }
         }
+
+        // 2. Parse URL Parameters for Deep Linking (e.g., from Telegram)
+        const params = new URLSearchParams(window.location.search);
+        const viewParam = params.get('view');
+        const idParam = params.get('id');
+
+        if (viewParam && idParam) {
+            // Check if view matches enum
+            if (Object.values(SystemView).includes(viewParam as SystemView)) {
+                setPendingDeepLink({ view: viewParam as SystemView, id: idParam });
+            }
+        }
+
         setIsLoading(false);
     }, [isDataLoaded, allTeachers]);
+
+    // Apply Deep Link once User is Logged In
+    useEffect(() => {
+        if (currentUser && pendingDeepLink) {
+            setCurrentView(pendingDeepLink.view);
+            setFocusItem({ view: pendingDeepLink.view, id: pendingDeepLink.id });
+            setPendingDeepLink(null); // Clear after applying
+            
+            // Clean URL
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
+    }, [currentUser, pendingDeepLink]);
+
+    // --- DIRECTOR CALENDAR AUTO-CHECK NOTIFICATIONS ---
+    useEffect(() => {
+        // Run this check once when app loads (if user is logged in)
+        // Ideally, this should be a Server Function (Cloud Functions), but for Client-side only app,
+        // we run it when ANY authorized user opens the app to trigger notifications for the director.
+        const checkCalendarNotifications = async () => {
+            if (!currentUser || !isConfigured || !db) return;
+
+            try {
+                // Get Config for Token
+                const configDoc = await getDoc(doc(db, "system_config", "settings"));
+                if (!configDoc.exists()) return;
+                const config = configDoc.data() as SystemConfig;
+                if (!config.telegramBotToken) return;
+
+                // Find Director(s)
+                const directors = allTeachers.filter(t => t.schoolId === currentUser.schoolId && t.roles.includes('DIRECTOR') && t.telegramChatId);
+                if (directors.length === 0) return;
+
+                const todayStr = new Date().toISOString().split('T')[0];
+                const tomorrow = new Date(); 
+                tomorrow.setDate(tomorrow.getDate() + 1);
+                const tomorrowStr = tomorrow.toISOString().split('T')[0];
+
+                // Query Events matching Today or Tomorrow that haven't been notified
+                const q = query(
+                    collection(db, "director_events"),
+                    where("schoolId", "==", currentUser.schoolId),
+                    where("date", "in", [todayStr, tomorrowStr])
+                );
+
+                const snapshot = await getDocs(q);
+                
+                snapshot.forEach(async (docSnap) => {
+                    const evt = docSnap.data() as DirectorEvent;
+                    let shouldUpdate = false;
+                    let notifType = '';
+
+                    // Check Tomorrow (1 Day Before)
+                    if (evt.date === tomorrowStr && !evt.notifiedOneDayBefore) {
+                        notifType = 'TOMORROW';
+                        shouldUpdate = true;
+                    }
+                    // Check Today (On Day)
+                    else if (evt.date === todayStr && !evt.notifiedOnDay) {
+                        notifType = 'TODAY';
+                        shouldUpdate = true;
+                    }
+
+                    if (shouldUpdate && notifType) {
+                        // 1. Send Telegram
+                        const title = notifType === 'TOMORROW' ? "แจ้งเตือนภารกิจวันพรุ่งนี้" : "แจ้งเตือนภารกิจวันนี้";
+                        const icon = notifType === 'TOMORROW' ? "⏰" : "🔔";
+                        const message = `${icon} <b>${title}</b>\n` +
+                                        `เรื่อง: ${evt.title}\n` +
+                                        `วันที่: ${evt.date}\n` +
+                                        `เวลา: ${evt.startTime}\n` +
+                                        `สถานที่: ${evt.location}`;
+                        
+                        directors.forEach(d => {
+                            sendTelegramMessage(config.telegramBotToken!, d.telegramChatId!, message);
+                        });
+
+                        // 2. Mark as Notified in DB to prevent spam
+                        const updateField = notifType === 'TOMORROW' ? { notifiedOneDayBefore: true } : { notifiedOnDay: true };
+                        await updateDoc(docSnap.ref, updateField);
+                    }
+                });
+
+            } catch (e) {
+                console.error("Auto-Notification Check Failed:", e);
+            }
+        };
+
+        // Delay slightly to ensure auth loaded
+        const timer = setTimeout(checkCalendarNotifications, 3000);
+        return () => clearTimeout(timer);
+
+    }, [currentUser, isDataLoaded]);
+
 
     // --- NOTIFICATION HELPERS ---
     const requestNotificationPermission = async () => {
@@ -404,6 +515,15 @@ const App: React.FC = () => {
             visible: true
         },
         {
+            id: SystemView.DIRECTOR_CALENDAR,
+            title: 'ปฏิทินปฏิบัติงาน ผอ.',
+            slogan: 'แจ้งเตือนนัดหมาย และภารกิจ',
+            icon: Calendar,
+            color: 'from-indigo-500 to-blue-400',
+            shadow: 'shadow-indigo-200',
+            visible: true // Visible to all, but only Officer/Director can edit in the component
+        },
+        {
             id: SystemView.DOCUMENTS,
             title: 'งานสารบรรณ',
             slogan: 'รับ-ส่ง รวดเร็ว ทันใจ',
@@ -540,6 +660,7 @@ const App: React.FC = () => {
         if (!currentSchool) return <div className="p-8 text-center text-slate-500">ไม่พบข้อมูลโรงเรียน</div>;
         switch (currentView) {
             case SystemView.PROFILE: return <UserProfile currentUser={currentUser} onUpdateUser={setCurrentUser} />;
+            case SystemView.DIRECTOR_CALENDAR: return <DirectorCalendar currentUser={currentUser} allTeachers={schoolTeachers} />;
             case SystemView.DOCUMENTS: 
                 return <DocumentsSystem 
                     currentUser={currentUser} 

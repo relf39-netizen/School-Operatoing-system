@@ -1,6 +1,5 @@
 
-
-import { DocumentItem, LeaveRequest, Transaction, Teacher, FinanceAccount, AttendanceRecord, PlanDepartment, School } from './types';
+import { DocumentItem, LeaveRequest, Transaction, Teacher, FinanceAccount, AttendanceRecord, PlanDepartment, School, DirectorEvent } from './types';
 
 // Configuration
 // Default location if school setting is missing
@@ -166,5 +165,29 @@ export const MOCK_PLAN_DATA: PlanDepartment[] = [
         projects: [
             { id: 'p1', name: 'โครงการพัฒนาหลักสูตร', budget: 50000, status: 'Approved' }
         ]
+    }
+];
+
+// Director Calendar Mocks
+export const MOCK_DIRECTOR_EVENTS: DirectorEvent[] = [
+    {
+        id: 'evt_1',
+        schoolId: '31030019',
+        title: 'ประชุมผู้บริหาร สพฐ.',
+        date: new Date().toISOString().split('T')[0], // Today
+        startTime: '09:00',
+        endTime: '12:00',
+        location: 'สำนักงานเขตพื้นที่การศึกษา',
+        description: 'ประชุมวาระพิเศษเรื่องนโยบายการศึกษาใหม่',
+        createdBy: 'admin_doc'
+    },
+    {
+        id: 'evt_2',
+        schoolId: '31030019',
+        title: 'เป็นประธานเปิดงานกีฬาสี',
+        date: new Date(new Date().setDate(new Date().getDate() + 1)).toISOString().split('T')[0], // Tomorrow
+        startTime: '08:00',
+        location: 'สนามฟุตบอลโรงเรียน',
+        createdBy: 'admin_doc'
     }
 ];

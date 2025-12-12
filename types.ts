@@ -1,5 +1,4 @@
 
-
 // Data Models
 
 export enum SystemView {
@@ -10,7 +9,8 @@ export enum SystemView {
   ATTENDANCE = 'ATTENDANCE',
   PLAN = 'PLAN',
   ADMIN_USERS = 'ADMIN_USERS',
-  PROFILE = 'PROFILE' // New View
+  PROFILE = 'PROFILE',
+  DIRECTOR_CALENDAR = 'DIRECTOR_CALENDAR' // New View
 }
 
 export type TeacherRole = 
@@ -106,6 +106,23 @@ export interface LeaveRequest {
   attachedFileUrl?: string; // Legacy field, keeping for compatibility
 }
 
+// New Interface for Director's Calendar
+export interface DirectorEvent {
+  id: string;
+  schoolId: string;
+  title: string;
+  description?: string;
+  date: string; // YYYY-MM-DD
+  startTime: string; // HH:MM
+  endTime?: string; // HH:MM
+  location: string;
+  createdBy: string; // User ID (Officer)
+  
+  // Notification Tracking (to prevent spam on reload)
+  notifiedOneDayBefore?: boolean;
+  notifiedOnDay?: boolean;
+}
+
 export interface FinanceAccount {
   id: string;
   schoolId?: string;
@@ -160,6 +177,7 @@ export interface Teacher {
   roles: TeacherRole[];
   isFirstLogin?: boolean; // True = ต้องเปลี่ยนรหัสผ่าน
   signatureBase64?: string; // User's signature for forms
+  telegramChatId?: string; // Telegram Chat ID for notifications
 }
 
 // --- Action Plan Types ---
@@ -196,4 +214,7 @@ export interface SystemConfig {
   // Signature Customization
   directorSignatureScale?: number;    // Scale factor (default 1.0)
   directorSignatureYOffset?: number;  // Vertical offset in pixels (default 0)
+
+  // Telegram Notification
+  telegramBotToken?: string; // Token from @BotFather
 }
