@@ -1,5 +1,4 @@
-
-import React, { ReactNode, ErrorInfo, Component } from 'react';
+import React, { Component, ReactNode, ErrorInfo } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 
@@ -14,7 +13,10 @@ interface ErrorBoundaryState {
 
 // Error Boundary Component to catch crashes
 class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  public state: ErrorBoundaryState = { hasError: false, error: null };
+  public state: ErrorBoundaryState = {
+    hasError: false,
+    error: null
+  };
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
     return { hasError: true, error };
@@ -43,7 +45,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
       );
     }
 
-    return (this.props as any).children;
+    return this.props.children;
   }
 }
 

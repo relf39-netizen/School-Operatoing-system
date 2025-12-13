@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Transaction, FinanceAccount, Teacher, FinanceAuditLog, SystemConfig } from '../types';
 import { MOCK_TRANSACTIONS, MOCK_ACCOUNTS } from '../constants';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
-import { TrendingUp, TrendingDown, DollarSign, Plus, Wallet, FileText, ArrowRight, PlusCircle, LayoutGrid, List, ArrowLeft, Loader, Database, ServerOff, Edit2, Trash2, X, Save, ShieldAlert, Eye, Printer, Upload, Calendar, Search, ChevronLeft, ChevronRight, HardDrive, Cloud } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, Plus, Wallet, FileText, ArrowRight, PlusCircle, LayoutGrid, List, ArrowLeft, Loader, Database, ServerOff, Edit2, Trash2, X, Save, ShieldAlert, Eye, Printer, Upload, Calendar, Search, ChevronLeft, ChevronRight, HardDrive, Cloud, RefreshCw, AlertTriangle, HelpCircle, FileSpreadsheet } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { db, isConfigured } from '../firebaseConfig';
 import { collection, query, where, getDocs, setDoc, updateDoc, doc, deleteDoc } from 'firebase/firestore';
@@ -128,6 +128,8 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
     // Import State
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [isImporting, setIsImporting] = useState(false);
+    const [isResetting, setIsResetting] = useState(false);
+    const [showImportHelp, setShowImportHelp] = useState(false);
 
     // Form Data
     const [newTrans, setNewTrans] = useState({ date: new Date().toISOString().split('T')[0], desc: '', amount: '', type: 'Income' });
@@ -343,6 +345,51 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
         setShowAccountForm(false);
     };
 
+    // --- RESET DATA FUNCTION ---
+    const handleResetData = async () => {
+        if (!confirm("⚠️ คำเตือน: คุณต้องการลบข้อมูลการเงินทั้งหมด (บัญชีและรายการรับ-จ่าย) ของโรงเรียนนี้ใช่หรือไม่?\n\nการกระทำนี้จะลบข้อมูลออกจากฐานข้อมูลถาวร และไม่สามารถกู้คืนได้\n\n(แนะนำให้ทำเมื่อข้อมูลผิดพลาดหรือต้องการเริ่มระบบใหม่)")) return;
+        
+        setIsResetting(true);
+
+        // 1. Delete from Firestore (Only for this school)
+        if (isConfigured && db) {
+            try {
+                // Delete Accounts
+                const accQ = query(collection(db, "finance_accounts"), where("schoolId", "==", currentUser.schoolId));
+                const accSnap = await getDocs(accQ);
+                const deleteAccPromises = accSnap.docs.map(d => deleteDoc(d.ref));
+                await Promise.all(deleteAccPromises);
+
+                // Delete Transactions
+                const transQ = query(collection(db, "finance_transactions"), where("schoolId", "==", currentUser.schoolId));
+                const transSnap = await getDocs(transQ);
+                const deleteTransPromises = transSnap.docs.map(d => deleteDoc(d.ref));
+                await Promise.all(deleteTransPromises);
+            } catch(e) {
+                console.error("Reset Error", e);
+                alert("เกิดข้อผิดพลาดในการลบข้อมูลบน Cloud");
+            }
+        }
+
+        // 2. Clear LocalStorage
+        localStorage.removeItem('schoolos_finance_accounts');
+        localStorage.removeItem('schoolos_finance_transactions');
+
+        // 3. Reset State
+        setAccounts([]);
+        setTransactions([]);
+        
+        setIsResetting(false);
+        alert("ล้างข้อมูลเรียบร้อยแล้ว ท่านสามารถเริ่มบันทึกข้อมูลใหม่ได้ทันที");
+        
+        // Reset View
+        if (activeTab === 'NonBudget') {
+            setViewMode('DETAIL'); // Stay in detail to show empty state
+        } else {
+            setViewMode('DASHBOARD');
+        }
+    };
+
     const handleAddTransaction = async (e: React.FormEvent) => {
         e.preventDefault();
         
@@ -405,7 +452,8 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
              const nbAcc = accounts.find(a => a.type === 'NonBudget');
              if (nbAcc) targetAccountId = nbAcc.id;
              else {
-                 alert("ไม่พบบัญชีปลายทางสำหรับนำเข้าข้อมูล");
+                 alert("ไม่พบบัญชีปลายทางสำหรับนำเข้าข้อมูล กรุณากด 'เปิดบัญชีรายได้สถานศึกษา' ก่อนนำเข้าไฟล์");
+                 if(fileInputRef.current) fileInputRef.current.value = '';
                  return;
              }
         } else {
@@ -556,26 +604,47 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
         <div className="animate-fade-in space-y-6 pb-20">
             {/* Header / Tabs */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                    <Wallet className="text-orange-500"/>
-                    ระบบการเงินและงบประมาณ
-                </h2>
-                
-                <div className="flex bg-slate-100 p-1 rounded-lg">
-                    {canSeeBudget && (
-                        <button 
-                            onClick={() => { setActiveTab('Budget'); setViewMode('DASHBOARD'); }}
-                            className={`px-4 py-2 rounded-md text-sm font-bold transition-all flex items-center gap-2 ${activeTab === 'Budget' ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                        >
-                            <DollarSign size={16}/> เงินงบประมาณ
-                        </button>
+                <div className="flex flex-col">
+                    <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                        <Wallet className="text-orange-500"/>
+                        ระบบการเงินและงบประมาณ
+                    </h2>
+                    {canEdit && (
+                        <div className="text-xs text-slate-400 mt-1 flex items-center gap-1">
+                            {isConfigured ? <Cloud size={12}/> : <HardDrive size={12}/>}
+                            {isConfigured ? 'Online Mode' : 'Local Mode'}
+                        </div>
                     )}
-                    {canSeeNonBudget && (
+                </div>
+                
+                <div className="flex items-center gap-3">
+                    <div className="flex bg-slate-100 p-1 rounded-lg">
+                        {canSeeBudget && (
+                            <button 
+                                onClick={() => { setActiveTab('Budget'); setViewMode('DASHBOARD'); }}
+                                className={`px-4 py-2 rounded-md text-sm font-bold transition-all flex items-center gap-2 ${activeTab === 'Budget' ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                            >
+                                <DollarSign size={16}/> เงินงบประมาณ
+                            </button>
+                        )}
+                        {canSeeNonBudget && (
+                            <button 
+                                onClick={() => { setActiveTab('NonBudget'); setViewMode('DASHBOARD'); }}
+                                className={`px-4 py-2 rounded-md text-sm font-bold transition-all flex items-center gap-2 ${activeTab === 'NonBudget' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                            >
+                                <Wallet size={16}/> เงินนอกงบประมาณ
+                            </button>
+                        )}
+                    </div>
+                    {/* RESET DATA BUTTON (ADMIN/DIRECTOR/OFFICER) */}
+                    {canEdit && (
                         <button 
-                            onClick={() => { setActiveTab('NonBudget'); setViewMode('DASHBOARD'); }}
-                            className={`px-4 py-2 rounded-md text-sm font-bold transition-all flex items-center gap-2 ${activeTab === 'NonBudget' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                            onClick={handleResetData}
+                            disabled={isResetting}
+                            className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg border border-transparent hover:border-red-200 transition-all"
+                            title="ล้างข้อมูลการเงินทั้งหมด (Reset Data)"
                         >
-                            <Wallet size={16}/> เงินนอกงบประมาณ
+                            {isResetting ? <RefreshCw className="animate-spin" size={20}/> : <Trash2 size={20}/>}
                         </button>
                     )}
                 </div>
@@ -584,11 +653,6 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
             {/* Content based on Tab */}
             {activeTab === 'Budget' && canSeeBudget && (
                 <div className="space-y-4">
-                     <div className="flex items-center gap-2 text-sm text-slate-500 bg-orange-50 p-2 rounded-lg w-fit">
-                        {isConfigured ? <Cloud size={14} className="text-orange-600"/> : <ServerOff size={14} className="text-red-500"/>}
-                        {isConfigured ? 'เชื่อมต่อฐานข้อมูล Firebase (Online)' : 'Offline Mode (Local)'}
-                     </div>
-
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         {accounts.filter(a => a.type === 'Budget').map(acc => {
                             const balance = getAccountBalance(acc.id);
@@ -656,13 +720,38 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
 
         if (!targetAcc && activeTab === 'NonBudget') {
             return (
-                <div className="text-center py-20">
-                    <p className="text-slate-500 mb-4">ยังไม่มีบัญชีเงินนอกงบประมาณ</p>
-                    {canEditNonBudget && (
-                         <button onClick={() => setShowAccountForm(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg shadow font-bold">
-                            เปิดบัญชีรายได้สถานศึกษา
-                         </button>
-                    )}
+                <div className="space-y-6 animate-slide-up pb-20">
+                    <div className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+                        <div>
+                            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                                <Wallet className="text-blue-500"/> เงินนอกงบประมาณ
+                            </h2>
+                            <p className="text-sm text-slate-500">บัญชีรายได้สถานศึกษา / เงินบริจาค / อื่นๆ</p>
+                        </div>
+                        {canEdit && (
+                            <button 
+                                onClick={handleResetData}
+                                disabled={isResetting}
+                                className="text-red-500 hover:bg-red-50 px-3 py-1.5 rounded-lg border border-red-200 text-sm font-bold flex items-center gap-2"
+                            >
+                                {isResetting ? <RefreshCw className="animate-spin" size={16}/> : <Trash2 size={16}/>} ล้างข้อมูลทั้งหมด
+                            </button>
+                        )}
+                    </div>
+
+                    <div className="text-center py-20 bg-white rounded-xl border border-dashed border-slate-300">
+                        <Wallet size={48} className="mx-auto text-slate-300 mb-4"/>
+                        <p className="text-slate-500 font-bold mb-2">ยังไม่มีบัญชีเงินนอกงบประมาณ</p>
+                        <p className="text-xs text-slate-400 mb-6 max-w-md mx-auto">
+                            หากท่านพบว่ามีข้อมูลในฐานข้อมูล แต่ไม่แสดงในหน้านี้ อาจเกิดจากข้อมูลบัญชี (Account) สูญหายหรือไม่ตรงกัน 
+                            <br/>ท่านสามารถกดปุ่ม "ล้างข้อมูลทั้งหมด" ด้านบนเพื่อเคลียร์ข้อมูลเก่า แล้วเริ่มสร้างบัญชีใหม่
+                        </p>
+                        {canEditNonBudget && (
+                             <button onClick={() => setShowAccountForm(true)} className="bg-blue-600 text-white px-6 py-2 rounded-lg shadow font-bold hover:bg-blue-700 transition-colors">
+                                เปิดบัญชีรายได้สถานศึกษา
+                             </button>
+                        )}
+                    </div>
                 </div>
             )
         }
@@ -719,8 +808,20 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
                     </div>
                     
                     <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
-                        {/* IMPORT BUTTON */}
-                        <div className="relative">
+                         {/* RESET BUTTON */}
+                         {canEdit && (
+                             <button 
+                                onClick={handleResetData}
+                                disabled={isResetting}
+                                className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg border border-transparent hover:border-red-200 transition-all mr-2"
+                                title="ล้างข้อมูลการเงินทั้งหมด (Reset)"
+                            >
+                                {isResetting ? <RefreshCw className="animate-spin" size={20}/> : <Trash2 size={20}/>}
+                            </button>
+                         )}
+
+                        {/* IMPORT BUTTON & HELP */}
+                        <div className="relative flex items-center gap-1">
                             <input 
                                 type="file" 
                                 ref={fileInputRef} 
@@ -729,14 +830,23 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
                                 onChange={handleImportExcel}
                             />
                             {canEdit && (
-                                <button 
-                                    onClick={() => fileInputRef.current?.click()}
-                                    disabled={isImporting}
-                                    className="bg-green-600 text-white px-4 py-2 rounded-lg shadow-sm hover:bg-green-700 font-bold flex items-center gap-2 text-sm disabled:opacity-50"
-                                >
-                                    {isImporting ? <Loader className="animate-spin" size={16}/> : <Upload size={16}/>}
-                                    <span className="hidden sm:inline">นำเข้า Excel</span>
-                                </button>
+                                <>
+                                    <button 
+                                        onClick={() => fileInputRef.current?.click()}
+                                        disabled={isImporting}
+                                        className="bg-green-600 text-white px-4 py-2 rounded-lg shadow-sm hover:bg-green-700 font-bold flex items-center gap-2 text-sm disabled:opacity-50"
+                                    >
+                                        {isImporting ? <Loader className="animate-spin" size={16}/> : <Upload size={16}/>}
+                                        <span className="hidden sm:inline">นำเข้า Excel</span>
+                                    </button>
+                                    <button 
+                                        onClick={() => setShowImportHelp(true)}
+                                        className="text-slate-400 hover:text-blue-600 p-2 hover:bg-slate-100 rounded-full transition-colors"
+                                        title="ดูรูปแบบไฟล์ที่รองรับ"
+                                    >
+                                        <HelpCircle size={20} />
+                                    </button>
+                                </>
                             )}
                         </div>
                         
@@ -1029,6 +1139,39 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
             {viewMode === 'DASHBOARD' && renderDashboard()}
             {viewMode === 'DETAIL' && renderDetail()}
             {viewMode === 'PRINT' && renderPrintView()}
+
+            {/* Help Import Modal */}
+            {showImportHelp && (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 animate-scale-up">
+                        <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                            <FileSpreadsheet className="text-green-600"/> รูปแบบไฟล์ Excel ที่รองรับ
+                        </h3>
+                        <div className="space-y-4 text-sm text-slate-600">
+                            <div>
+                                <p className="font-bold text-slate-800 mb-2">1. ชื่อคอลัมน์ (หัวตาราง)</p>
+                                <ul className="list-disc pl-5 space-y-1">
+                                    <li><span className="font-mono bg-slate-100 px-1 rounded">วันที่</span> หรือ Date</li>
+                                    <li><span className="font-mono bg-slate-100 px-1 rounded">รายการ</span> หรือ Description</li>
+                                    <li><span className="font-mono bg-slate-100 px-1 rounded">จำนวนเงิน</span> หรือ Amount</li>
+                                    <li><span className="font-mono bg-slate-100 px-1 rounded">ประเภท</span> (ถ้ามีคำว่า "จ่าย" = รายจ่าย, อื่นๆ = รายรับ)</li>
+                                </ul>
+                            </div>
+                            <div>
+                                <p className="font-bold text-slate-800 mb-2">2. รูปแบบวันที่</p>
+                                <ul className="list-disc pl-5 space-y-1">
+                                    <li>วว/ดด/ปปปป (พ.ศ. หรือ ค.ศ.) เช่น <code>31/01/2567</code></li>
+                                    <li>YYYY-MM-DD เช่น <code>2024-01-31</code></li>
+                                    <li>Format วันที่มาตรฐานของ Excel</li>
+                                </ul>
+                            </div>
+                        </div>
+                        <div className="mt-6 flex justify-end">
+                            <button onClick={() => setShowImportHelp(false)} className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg font-bold hover:bg-slate-200">ปิดหน้าต่าง</button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Account Form Modal */}
             {showAccountForm && (

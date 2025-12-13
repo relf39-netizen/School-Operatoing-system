@@ -34,10 +34,32 @@ const DirectorCalendar: React.FC<DirectorCalendarProps> = ({ currentUser, allTea
     const isAdmin = currentUser.roles.includes('SYSTEM_ADMIN');
     const canEdit = isDocOfficer || isDirector || isAdmin;
 
-    // --- Helpers ---
-    const getThaiDate = (dateStr: string) => {
+    // --- Helpers: Thai Date Formatting ---
+    
+    // Format: วันจันทร์ที่ 1 มกราคม 2567
+    const getThaiFullDate = (dateStr: string) => {
+        if (!dateStr) return '';
         const d = new Date(dateStr);
-        return d.toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+        const days = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
+        const months = [
+            "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
+            "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"
+        ];
+        return `วัน${days[d.getDay()]}ที่ ${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear() + 543}`;
+    };
+
+    // Format: ม.ค. (Short Month)
+    const getThaiMonthShort = (dateStr: string) => {
+        const d = new Date(dateStr);
+        const months = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+        return months[d.getMonth()];
+    };
+
+    // Format: จันทร์ (Short Day)
+    const getThaiDayShort = (dateStr: string) => {
+        const d = new Date(dateStr);
+        const days = ['อา.', 'จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.'];
+        return days[d.getDay()];
     };
 
     // --- Data & Config Loading ---
@@ -157,6 +179,9 @@ const DirectorCalendar: React.FC<DirectorCalendarProps> = ({ currentUser, allTea
         let title = "";
         let icon = "";
         
+        // Define Thai Date for Message
+        const thaiDateStr = getThaiFullDate(event.date);
+
         switch (type) {
             case 'NEW': title = "เพิ่มนัดหมายใหม่"; icon = "🆕"; break;
             case 'TOMORROW': title = "แจ้งเตือนภารกิจวันพรุ่งนี้"; icon = "⏰"; break;
@@ -165,10 +190,11 @@ const DirectorCalendar: React.FC<DirectorCalendarProps> = ({ currentUser, allTea
 
         const message = `${icon} <b>${title}</b>\n` +
                         `เรื่อง: ${event.title}\n` +
-                        `วันที่: ${getThaiDate(event.date)}\n` +
+                        `วันที่: ${thaiDateStr}\n` +
                         `เวลา: ${event.startTime}${event.endTime ? ' - ' + event.endTime : ''} น.\n` +
                         `สถานที่: ${event.location || '-'}\n` +
-                        `${event.description ? `รายละเอียด: ${event.description}` : ''}`;
+                        `${event.description ? `รายละเอียด: ${event.description}\n` : ''}` + 
+                        `(บันทึกโดย: ${currentUser.name})`;
 
         // Link to Calendar View
         const baseUrl = currentBaseUrl || window.location.origin;
@@ -189,7 +215,7 @@ const DirectorCalendar: React.FC<DirectorCalendarProps> = ({ currentUser, allTea
                     <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
                         <Calendar className="text-purple-600"/> ปฏิทินปฏิบัติงานผู้อำนวยการ
                     </h2>
-                    <p className="text-slate-500 text-sm">จัดการและแจ้งเตือนภารกิจงาน</p>
+                    <p className="text-slate-500 text-sm">จัดการและแจ้งเตือนภารกิจงาน (สำหรับเจ้าหน้าที่ธุรการและผู้อำนวยการ)</p>
                 </div>
                 {canEdit && (
                     <button 
@@ -282,11 +308,11 @@ const DirectorCalendar: React.FC<DirectorCalendarProps> = ({ currentUser, allTea
                             <div key={event.id} className={`bg-white rounded-xl p-6 shadow-sm border transition-all ${isToday ? 'border-purple-500 ring-1 ring-purple-100' : 'border-slate-200'} ${isPast ? 'opacity-60 grayscale' : ''}`}>
                                 <div className="flex flex-col md:flex-row justify-between items-start gap-4">
                                     <div className="flex gap-4">
-                                        {/* Date Box */}
-                                        <div className={`flex flex-col items-center justify-center w-20 h-20 rounded-xl shrink-0 ${isToday ? 'bg-purple-600 text-white' : (isPast ? 'bg-slate-200 text-slate-500' : 'bg-purple-50 text-purple-700')}`}>
-                                            <span className="text-xs font-bold uppercase">{evtDate.toLocaleDateString('en-US', { month: 'short' })}</span>
+                                        {/* Date Box (Thai Format) */}
+                                        <div className={`flex flex-col items-center justify-center w-24 h-24 rounded-xl shrink-0 ${isToday ? 'bg-purple-600 text-white' : (isPast ? 'bg-slate-200 text-slate-500' : 'bg-purple-50 text-purple-700')}`}>
+                                            <span className="text-xs font-bold">{getThaiMonthShort(event.date)}</span>
                                             <span className="text-3xl font-bold">{evtDate.getDate()}</span>
-                                            <span className="text-[10px]">{evtDate.toLocaleDateString('th-TH', { weekday: 'short' })}</span>
+                                            <span className="text-[10px]">{getThaiDayShort(event.date)}</span>
                                         </div>
 
                                         {/* Content */}
@@ -296,6 +322,11 @@ const DirectorCalendar: React.FC<DirectorCalendarProps> = ({ currentUser, allTea
                                                 <h3 className={`text-lg font-bold ${isPast ? 'text-slate-600' : 'text-slate-800'}`}>{event.title}</h3>
                                             </div>
                                             
+                                            {/* Full Thai Date Display */}
+                                            <div className="text-sm font-bold text-slate-700 mb-1">
+                                                {getThaiFullDate(event.date)}
+                                            </div>
+
                                             <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-600 mt-2">
                                                 <div className="flex items-center gap-1">
                                                     <Clock size={16} className="text-purple-500"/> 
