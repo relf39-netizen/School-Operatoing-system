@@ -1,5 +1,5 @@
 
-import { DocumentItem, LeaveRequest, Transaction, Teacher, FinanceAccount, AttendanceRecord, PlanDepartment, School, DirectorEvent } from './types';
+import { DocumentItem, LeaveRequest, Transaction, Teacher, FinanceAccount, AttendanceRecord, PlanDepartment, School, DirectorEvent, EnrollmentData, TestScoreData } from './types';
 
 // Configuration
 // Default location if school setting is missing
@@ -160,11 +160,37 @@ export const MOCK_PLAN_DATA: PlanDepartment[] = [
     {
         id: 'dept_1',
         schoolId: '31030019',
-        name: 'กลุ่มบริหารวิชาการ',
-        allocatedBudget: 150000,
+        name: 'กลุ่มบริหารงานวิชาการ',
         projects: [
-            { id: 'p1', name: 'โครงการพัฒนาหลักสูตร', budget: 50000, status: 'Approved' }
+            { id: 'p1', name: 'โครงการพัฒนาหลักสูตรสถานศึกษา', subsidyBudget: 50000, learnerDevBudget: 0, status: 'Approved' }
         ]
+    },
+    {
+        id: 'dept_2',
+        schoolId: '31030019',
+        name: 'กลุ่มบริหารงานงบประมาณ',
+        projects: []
+    },
+    {
+        id: 'dept_3',
+        schoolId: '31030019',
+        name: 'กลุ่มบริหารงานบุคคล',
+        projects: []
+    },
+    {
+        id: 'dept_4',
+        schoolId: '31030019',
+        name: 'กลุ่มบริหารงานทั่วไป',
+        projects: [
+             // Completed project with actual expense (Over budget example)
+             { id: 'p2', name: 'โครงการทัศนศึกษา', subsidyBudget: 0, learnerDevBudget: 120000, actualExpense: 125000, status: 'Completed' }
+        ]
+    },
+    {
+        id: 'dept_5',
+        schoolId: '31030019',
+        name: 'งบกลาง / สาธารณูปโภค',
+        projects: []
     }
 ];
 
@@ -190,4 +216,56 @@ export const MOCK_DIRECTOR_EVENTS: DirectorEvent[] = [
         location: 'สนามฟุตบอลโรงเรียน',
         createdBy: 'admin_doc'
     }
+];
+
+// Academic Enrollments Mock
+export const MOCK_ENROLLMENTS: EnrollmentData[] = [
+    {
+        id: 'enroll_2565',
+        schoolId: '31030019',
+        year: '2565',
+        levels: {
+            'Anuban1': { m: 10, f: 12 }, 'Anuban2': { m: 12, f: 10 }, 'Anuban3': { m: 11, f: 11 },
+            'Prathom1': { m: 15, f: 14 }, 'Prathom2': { m: 14, f: 16 }, 'Prathom3': { m: 16, f: 15 },
+            'Prathom4': { m: 13, f: 14 }, 'Prathom5': { m: 12, f: 13 }, 'Prathom6': { m: 18, f: 16 },
+        }
+    },
+    {
+        id: 'enroll_2566',
+        schoolId: '31030019',
+        year: '2566',
+        levels: {
+            'Anuban1': { m: 12, f: 11 }, 'Anuban2': { m: 10, f: 12 }, 'Anuban3': { m: 12, f: 10 },
+            'Prathom1': { m: 11, f: 11 }, 'Prathom2': { m: 15, f: 14 }, 'Prathom3': { m: 14, f: 16 },
+            'Prathom4': { m: 16, f: 15 }, 'Prathom5': { m: 13, f: 14 }, 'Prathom6': { m: 12, f: 13 },
+        }
+    },
+    {
+        id: 'enroll_2567',
+        schoolId: '31030019',
+        year: '2567',
+        levels: {
+            'Anuban1': { m: 14, f: 13 }, 'Anuban2': { m: 12, f: 11 }, 'Anuban3': { m: 10, f: 12 },
+            'Prathom1': { m: 12, f: 10 }, 'Prathom2': { m: 11, f: 11 }, 'Prathom3': { m: 15, f: 14 },
+            'Prathom4': { m: 14, f: 16 }, 'Prathom5': { m: 16, f: 15 }, 'Prathom6': { m: 13, f: 14 },
+        }
+    }
+];
+
+// Academic Test Scores Mock
+export const MOCK_TEST_SCORES: TestScoreData[] = [
+    // RT
+    { id: 'rt_2565', schoolId: '31030019', year: '2565', testType: 'RT', results: { 'Reading': 75.5, 'Understanding': 78.2 } },
+    { id: 'rt_2566', schoolId: '31030019', year: '2566', testType: 'RT', results: { 'Reading': 78.0, 'Understanding': 80.5 } },
+    { id: 'rt_2567', schoolId: '31030019', year: '2567', testType: 'RT', results: { 'Reading': 82.5, 'Understanding': 81.0 } },
+    
+    // NT
+    { id: 'nt_2565', schoolId: '31030019', year: '2565', testType: 'NT', results: { 'Math': 45.2, 'Thai': 55.4 } },
+    { id: 'nt_2566', schoolId: '31030019', year: '2566', testType: 'NT', results: { 'Math': 48.5, 'Thai': 58.0 } },
+    { id: 'nt_2567', schoolId: '31030019', year: '2567', testType: 'NT', results: { 'Math': 52.1, 'Thai': 60.5 } },
+
+    // O-NET
+    { id: 'onet_2565', schoolId: '31030019', year: '2565', testType: 'ONET', results: { 'Thai': 50.2, 'Math': 35.5, 'Science': 40.1, 'English': 30.5 } },
+    { id: 'onet_2566', schoolId: '31030019', year: '2566', testType: 'ONET', results: { 'Thai': 52.8, 'Math': 38.0, 'Science': 42.5, 'English': 32.0 } },
+    { id: 'onet_2567', schoolId: '31030019', year: '2567', testType: 'ONET', results: { 'Thai': 55.0, 'Math': 42.2, 'Science': 45.0, 'English': 35.5 } },
 ];

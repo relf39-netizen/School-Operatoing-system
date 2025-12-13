@@ -6,17 +6,18 @@ import LeaveSystem from './components/LeaveSystem';
 import FinanceSystem from './components/FinanceSystem';
 import AttendanceSystem from './components/AttendanceSystem';
 import ActionPlanSystem from './components/ActionPlanSystem';
+import AcademicSystem from './components/AcademicSystem'; // Import
 import AdminUserManagement from './components/AdminUserManagement';
 import UserProfile from './components/UserProfile';
 import LoginScreen from './components/LoginScreen';
 import FirstLoginSetup from './components/FirstLoginSetup';
 import SuperAdminDashboard from './components/SuperAdminDashboard';
-import DirectorCalendar from './components/DirectorCalendar'; // Import Component
+import DirectorCalendar from './components/DirectorCalendar'; 
 import { SystemView, Teacher, School, TeacherRole, DirectorEvent, SystemConfig } from './types';
 import { 
     Activity, Users, Clock, FileText, CalendarRange, 
     Loader, Database, ServerOff, Home, LogOut, 
-    Settings, ChevronLeft, Building2, LayoutGrid, Bell, UserCircle, ExternalLink, X, Calendar
+    Settings, ChevronLeft, Building2, LayoutGrid, Bell, UserCircle, ExternalLink, X, Calendar, GraduationCap
 } from 'lucide-react';
 import { MOCK_DOCUMENTS, MOCK_LEAVE_REQUESTS, MOCK_TRANSACTIONS, MOCK_TEACHERS, MOCK_SCHOOLS } from './constants';
 import { db, isConfigured } from './firebaseConfig';
@@ -538,7 +539,16 @@ const App: React.FC = () => {
             icon: Calendar,
             color: 'from-indigo-500 to-blue-400',
             shadow: 'shadow-indigo-200',
-            visible: true // Visible to all, but only Officer/Director can edit in the component
+            visible: true 
+        },
+        {
+            id: SystemView.ACADEMIC, // NEW
+            title: 'งานวิชาการ',
+            slogan: 'สถิตินักเรียน / ผลสอบ O-NET',
+            icon: GraduationCap,
+            color: 'from-indigo-600 to-violet-500',
+            shadow: 'shadow-indigo-200',
+            visible: true 
         },
         {
             id: SystemView.DOCUMENTS,
@@ -678,6 +688,7 @@ const App: React.FC = () => {
         switch (currentView) {
             case SystemView.PROFILE: return <UserProfile currentUser={currentUser} onUpdateUser={setCurrentUser} />;
             case SystemView.DIRECTOR_CALENDAR: return <DirectorCalendar currentUser={currentUser} allTeachers={schoolTeachers} />;
+            case SystemView.ACADEMIC: return <AcademicSystem currentUser={currentUser} />; // NEW
             case SystemView.DOCUMENTS: 
                 return <DocumentsSystem 
                     currentUser={currentUser} 
@@ -792,7 +803,7 @@ const App: React.FC = () => {
                         <span className="font-bold text-sm md:text-base">{currentSchool?.name || 'SchoolOS System'}</span>
                     </div>
                     <div className="text-[10px] md:text-xs text-slate-400">
-                        © Mr AI & Mr Siam 
+                        © 2024 SchoolOS
                     </div>
                 </div>
             </footer>

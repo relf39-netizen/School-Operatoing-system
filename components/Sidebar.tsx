@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { SystemView, Teacher } from '../types';
-import { Home, FileText, UserMinus, DollarSign, MapPin, LogOut, X, CalendarRange, Settings, UserCircle } from 'lucide-react';
+import { Home, FileText, UserMinus, DollarSign, MapPin, LogOut, X, CalendarRange, Settings, UserCircle, GraduationCap, Calendar } from 'lucide-react';
 
 interface SidebarProps {
     currentView: SystemView;
@@ -11,16 +11,20 @@ interface SidebarProps {
     currentUser: Teacher;
     allTeachers: Teacher[];
     onSwitchUser: (teacherId: string) => void;
+    schoolLogo?: string; // Add schoolLogo prop
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ currentView, onChangeView, isMobileOpen, toggleMobile, currentUser, allTeachers, onSwitchUser }) => {
+const Sidebar: React.FC<SidebarProps> = ({ currentView, onChangeView, isMobileOpen, toggleMobile, currentUser, allTeachers, onSwitchUser, schoolLogo }) => {
     
+    // Reordered Menu Items to match App.tsx
     const menuItems = [
         { id: SystemView.DASHBOARD, label: 'ภาพรวม', icon: Home, visible: true },
-        { id: SystemView.DOCUMENTS, label: 'ระบบธุรการ', icon: FileText, visible: true },
-        { id: SystemView.PLAN, label: 'แผนปฏิบัติการ', icon: CalendarRange, visible: true },
+        { id: SystemView.DOCUMENTS, label: 'งานสารบรรณ', icon: FileText, visible: true },
         { id: SystemView.LEAVE, label: 'ระบบการลา', icon: UserMinus, visible: true },
+        { id: SystemView.DIRECTOR_CALENDAR, label: 'ปฏิทินปฏิบัติงาน ผอ.', icon: Calendar, visible: true },
+        { id: SystemView.ACADEMIC, label: 'งานวิชาการ', icon: GraduationCap, visible: true }, 
         { id: SystemView.FINANCE, label: 'ระบบการเงิน', icon: DollarSign, visible: true },
+        { id: SystemView.PLAN, label: 'แผนปฏิบัติการ', icon: CalendarRange, visible: true },
         { id: SystemView.ATTENDANCE, label: 'ลงเวลาทำงาน', icon: MapPin, visible: true },
         { id: SystemView.ADMIN_USERS, label: 'ผู้ดูแลระบบ', icon: Settings, visible: currentUser.roles.includes('SYSTEM_ADMIN') || currentUser.roles.includes('DIRECTOR') },
     ];
@@ -41,9 +45,13 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onChangeView, isMobileOp
             <div className={`${baseClasses} ${mobileClasses} flex flex-col shadow-xl`}>
                 <div className="h-16 flex items-center justify-between px-6 bg-slate-800 shrink-0">
                     <div className="flex items-center space-x-2">
-                        <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center shadow-lg">
-                            <span className="font-bold text-white text-lg">S</span>
-                        </div>
+                        {schoolLogo ? (
+                            <img src={schoolLogo} alt="School Logo" className="w-8 h-8 rounded-lg object-contain bg-white" />
+                        ) : (
+                            <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center shadow-lg">
+                                <span className="font-bold text-white text-lg">S</span>
+                            </div>
+                        )}
                         <span className="text-xl font-bold tracking-tight">SchoolOS</span>
                     </div>
                     <button onClick={toggleMobile} className="lg:hidden">
@@ -79,7 +87,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onChangeView, isMobileOp
 
                 {/* Profile Footer */}
                 <div className="p-4 bg-slate-800/50 border-t border-slate-800">
-                    <div className="flex items-center gap-3 mb-4 px-2">
+                    <div className="flex items-center gap-3 mb-4 px-2 cursor-pointer hover:bg-slate-700/50 p-2 rounded-lg transition-colors" onClick={() => onChangeView(SystemView.PROFILE)}>
                         <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-slate-300">
                              <UserCircle size={32}/>
                         </div>

@@ -294,6 +294,34 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
         setEditingAccount(null);
     };
 
+    // --- Delete Account Logic ---
+    const handleDeleteAccount = async (e: React.MouseEvent, accId: string) => {
+        e.stopPropagation();
+        if (!confirm("ยืนยันการลบบัญชีนี้?\n\n⚠️ คำเตือน: ประวัติธุรกรรมทั้งหมดในบัญชีนี้จะถูกลบออกจากหน้าจอ")) return;
+
+        // 1. Remove from Account State
+        const updatedAccounts = accounts.filter(a => a.id !== accId);
+        setAccounts(updatedAccounts);
+
+        // 2. Remove Transactions from State (Clean up UI immediately)
+        const updatedTrans = transactions.filter(t => t.accountId !== accId);
+        setTransactions(updatedTrans);
+
+        // 3. Persistent Delete
+        if (isConfigured && db) {
+            try {
+                // Delete Account Doc
+                await deleteDoc(doc(db, "finance_accounts", accId));
+                // Note: We don't batch delete transactions here to keep it simple, 
+                // they will just be orphaned in Firestore but hidden in UI.
+            } catch (e) { console.error(e); }
+        } else {
+            // Update LocalStorage
+            localStorage.setItem('schoolos_finance_accounts', JSON.stringify(updatedAccounts));
+            localStorage.setItem('schoolos_finance_transactions', JSON.stringify(updatedTrans));
+        }
+    };
+
 
     // Update active tab logic based on permissions
     useEffect(() => {
@@ -464,26 +492,9 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
         if (!e.target.files || !e.target.files[0]) return;
         const file = e.target.files[0];
 
-        // Determine Target Account
-        let targetAccountId = '';
-
-        if (selectedAccount) {
-            targetAccountId = selectedAccount.id;
-        } else if (activeTab === 'NonBudget') {
-             const nbAcc = accounts.find(a => a.type === 'NonBudget');
-             if (nbAcc) targetAccountId = nbAcc.id;
-             else {
-                 alert("ไม่พบบัญชีปลายทางสำหรับนำเข้าข้อมูล กรุณากด 'เปิดบัญชีรายได้สถานศึกษา' ก่อนนำเข้าไฟล์");
-                 if(fileInputRef.current) fileInputRef.current.value = '';
-                 return;
-             }
-        } else {
-             alert("กรุณาเลือกบัญชีที่ต้องการนำเข้าข้อมูลก่อน");
-             return;
-        }
-
         setIsImporting(true);
         const reader = new FileReader();
+        
         reader.onload = async (evt) => {
             try {
                 const bstr = evt.target?.result;
@@ -493,27 +504,56 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
                 
                 const rawData = XLSX.utils.sheet_to_json(ws);
                 const batchTransactions: any[] = [];
+                const newAccounts: any[] = [];
                 let successCount = 0;
 
-                rawData.forEach((row: any) => {
+                // Clone existing accounts map for quick lookup
+                const accountMap = new Map<string, string>(); // Name -> ID
+                accounts.forEach(a => accountMap.set(a.name.trim(), a.id));
+
+                for (const row of rawData as any[]) {
                     const normalizedRow: any = {};
                     Object.keys(row).forEach(key => normalizedRow[key.trim()] = row[key]);
 
+                    // Extract columns
                     const dateRaw = normalizedRow['Date'] || normalizedRow['date'] || normalizedRow['วันที่'];
+                    const accountNameRaw = normalizedRow['Account'] || normalizedRow['ชื่อบัญชี'] || normalizedRow['Account Name'];
                     const descRaw = normalizedRow['Description'] || normalizedRow['description'] || normalizedRow['รายการ'];
                     const amountRaw = normalizedRow['Amount'] || normalizedRow['amount'] || normalizedRow['จำนวนเงิน'];
-                    const typeRaw = normalizedRow['Type'] || normalizedRow['type'] || normalizedRow['ประเภท'];
+                    const typeRaw = normalizedRow['Type'] || normalizedRow['type'] || normalizedRow['ประเภท'] || normalizedRow['ฝาก/ถอน'];
 
-                    if (!descRaw || !amountRaw) return;
+                    if (!descRaw || !amountRaw || !accountNameRaw) continue;
 
                     let amountValue = parseFloat(amountRaw.toString().replace(/,/g, ''));
-                    if (isNaN(amountValue)) return;
+                    if (isNaN(amountValue)) continue;
 
+                    // Determine Type (Income/Expense)
                     let finalType = 'Income';
-                    if (typeRaw && typeRaw.toString().toLowerCase().includes('จ่าย')) finalType = 'Expense';
+                    const typeStr = typeRaw ? typeRaw.toString().toLowerCase() : '';
+                    if (typeStr.includes('จ่าย') || typeStr.includes('ถอน') || typeStr.includes('expense') || typeStr.includes('withdraw') || typeStr.includes('out')) {
+                        finalType = 'Expense';
+                    }
 
-                    // Parse Date correctly
+                    // Parse Date
                     const finalDate = parseExcelDate(dateRaw);
+                    const cleanAccountName = accountNameRaw.toString().trim();
+
+                    // --- ACCOUNT MATCHING LOGIC ---
+                    let targetAccountId = accountMap.get(cleanAccountName);
+
+                    if (!targetAccountId) {
+                        // Create New Account if not exists
+                        const newId = `acc_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+                        const newAcc = {
+                            id: newId,
+                            schoolId: currentUser.schoolId,
+                            name: cleanAccountName,
+                            type: activeTab // Use current tab as default type for new accounts
+                        };
+                        newAccounts.push(newAcc);
+                        accountMap.set(cleanAccountName, newId); // Update map
+                        targetAccountId = newId;
+                    }
 
                     batchTransactions.push({
                         id: `imp_${Date.now()}_${successCount}`,
@@ -525,29 +565,43 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
                         type: finalType
                     });
                     successCount++;
-                });
+                }
 
                 if (batchTransactions.length > 0) {
-                    // Batch Save
+                    // 1. Save New Accounts First
+                    if (newAccounts.length > 0) {
+                        if (isConfigured && db) {
+                            try {
+                                const accPromises = newAccounts.map(a => setDoc(doc(db, "finance_accounts", a.id), a));
+                                await Promise.all(accPromises);
+                            } catch (e) { console.error("Account Batch Save Error", e); }
+                        } else {
+                            // Local Storage
+                            const currentAllAcc = JSON.parse(localStorage.getItem('schoolos_finance_accounts') || '[]');
+                            localStorage.setItem('schoolos_finance_accounts', JSON.stringify([...currentAllAcc, ...newAccounts]));
+                        }
+                        // Update State
+                        setAccounts(prev => [...prev, ...newAccounts]);
+                    }
+
+                    // 2. Save Transactions
                     if (isConfigured && db) {
-                        // Firebase Batch Import (Sequentially for simplicity)
                         try {
-                            const promises = batchTransactions.map(t => setDoc(doc(db, "finance_transactions", t.id), t));
-                            await Promise.all(promises);
+                            const transPromises = batchTransactions.map(t => setDoc(doc(db, "finance_transactions", t.id), t));
+                            await Promise.all(transPromises);
                         } catch (err) {
-                            console.error("Batch Import Failed", err);
+                            console.error("Trans Batch Import Failed", err);
                             alert("เกิดข้อผิดพลาดในการบันทึกข้อมูลบางส่วนลงฐานข้อมูล");
                         }
                     } else {
-                         // Local Storage
                          const currentAllTrans = JSON.parse(localStorage.getItem('schoolos_finance_transactions') || '[]');
                          localStorage.setItem('schoolos_finance_transactions', JSON.stringify([...currentAllTrans, ...batchTransactions]));
                     }
                     
-                    setTransactions([...transactions, ...batchTransactions]);
-                    alert(`นำเข้าข้อมูลสำเร็จจำนวน ${successCount} รายการ`);
+                    setTransactions(prev => [...prev, ...batchTransactions]);
+                    alert(`นำเข้าข้อมูลสำเร็จ ${successCount} รายการ (สร้างบัญชีใหม่ ${newAccounts.length} บัญชี)`);
                 } else {
-                    alert("ไม่พบข้อมูลที่สามารถนำเข้าได้ กรุณาตรวจสอบไฟล์ Excel (ต้องมีคอลัมน์: วันที่, รายการ, จำนวนเงิน)");
+                    alert("ไม่พบข้อมูลที่สามารถนำเข้าได้ กรุณาตรวจสอบไฟล์ Excel (ต้องมีคอลัมน์: วันที่, ชื่อบัญชี, รายการ, ฝาก/ถอน, จำนวนเงิน)");
                 }
 
             } catch (error) {
@@ -660,43 +714,113 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
                 </div>
             </div>
 
+            {/* Global Actions (Import Button Moved Here) */}
+            {canEdit && (
+                <div className="flex justify-end gap-2">
+                    <div className="relative flex items-center gap-1">
+                        <input 
+                            type="file" 
+                            ref={fileInputRef} 
+                            className="hidden" 
+                            accept=".xlsx, .xls"
+                            onChange={handleImportExcel}
+                        />
+                        <button 
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={isImporting}
+                            className="bg-green-600 text-white px-4 py-2 rounded-lg shadow-sm hover:bg-green-700 font-bold flex items-center gap-2 text-sm disabled:opacity-50"
+                        >
+                            {isImporting ? <Loader className="animate-spin" size={16}/> : <Upload size={16}/>}
+                            <span>นำเข้าไฟล์ Excel</span>
+                        </button>
+                        <button 
+                            onClick={() => setShowImportHelp(true)}
+                            className="text-slate-400 hover:text-blue-600 p-2 hover:bg-white rounded-full transition-colors bg-slate-100"
+                            title="ดูรูปแบบไฟล์ที่รองรับ"
+                        >
+                            <HelpCircle size={20} />
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {/* Content based on Tab */}
             {activeTab === 'Budget' && canSeeBudget && (
                 <div className="space-y-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {accounts.filter(a => a.type === 'Budget').map(acc => {
+                        {accounts.filter(a => a.type === 'Budget').map((acc, index) => {
                             const balance = getAccountBalance(acc.id);
+                            
+                            // Beautified Card Styles (Alternating Colors)
+                            const cardStyles = [
+                                'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200 hover:border-blue-300 shadow-blue-100',
+                                'bg-gradient-to-br from-emerald-50 to-teal-50 border-emerald-200 hover:border-emerald-300 shadow-emerald-100',
+                                'bg-gradient-to-br from-amber-50 to-orange-50 border-amber-200 hover:border-amber-300 shadow-amber-100',
+                                'bg-gradient-to-br from-rose-50 to-pink-50 border-rose-200 hover:border-rose-300 shadow-rose-100',
+                                'bg-gradient-to-br from-purple-50 to-violet-50 border-purple-200 hover:border-purple-300 shadow-purple-100',
+                                'bg-gradient-to-br from-cyan-50 to-sky-50 border-cyan-200 hover:border-cyan-300 shadow-cyan-100',
+                            ];
+                            const currentStyle = cardStyles[index % cardStyles.length];
+                            
+                            const iconStyles = [
+                                'bg-blue-200 text-blue-700',
+                                'bg-emerald-200 text-emerald-700',
+                                'bg-amber-200 text-amber-700',
+                                'bg-rose-200 text-rose-700',
+                                'bg-purple-200 text-purple-700',
+                                'bg-cyan-200 text-cyan-700',
+                            ];
+                            const currentIconStyle = iconStyles[index % iconStyles.length];
+
                             return (
                                 <div 
                                     key={acc.id} 
-                                    className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 hover:shadow-md hover:border-orange-300 transition-all cursor-pointer group relative"
+                                    className={`relative rounded-2xl shadow-sm hover:shadow-lg border-2 p-6 transition-all cursor-pointer group hover:-translate-y-1 ${currentStyle}`}
                                     onClick={() => { setSelectedAccount(acc); setViewMode('DETAIL'); }}
                                 >
-                                    {/* Edit Button for Budget Accounts */}
+                                    {/* Edit Button */}
                                     {canEditBudget && (
-                                        <button 
-                                            onClick={(e) => { e.stopPropagation(); setEditingAccount(acc); setNewAccountName(acc.name); setShowEditAccountModal(true); }}
-                                            className="absolute top-4 right-4 p-2 bg-white text-slate-400 hover:text-blue-600 rounded-full hover:bg-slate-100 z-10"
-                                            title="แก้ไขชื่อบัญชี"
-                                        >
-                                            <Edit2 size={16}/>
-                                        </button>
+                                        <div className="absolute top-3 right-3 flex gap-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity bg-white/80 rounded-lg p-1 shadow-sm backdrop-blur-sm">
+                                            <button 
+                                                onClick={(e) => { e.stopPropagation(); setEditingAccount(acc); setNewAccountName(acc.name); setShowEditAccountModal(true); }}
+                                                className="p-2 text-slate-500 hover:text-blue-600 hover:bg-white rounded-md transition-colors"
+                                                title="แก้ไขชื่อบัญชี"
+                                            >
+                                                <Edit2 size={16}/>
+                                            </button>
+                                            <button 
+                                                onClick={(e) => handleDeleteAccount(e, acc.id)}
+                                                className="p-2 text-slate-500 hover:text-red-600 hover:bg-white rounded-md transition-colors"
+                                                title="ลบบัญชี"
+                                            >
+                                                <Trash2 size={16}/>
+                                            </button>
+                                        </div>
                                     )}
 
-                                    <div className="flex justify-between items-start mb-4">
-                                        <div className="p-3 bg-orange-50 rounded-lg group-hover:bg-orange-500 group-hover:text-white transition-colors">
-                                            <FileText size={24}/>
-                                        </div>
-                                        <div className="text-right">
-                                            <p className="text-xs text-slate-500">ยอดคงเหลือ</p>
-                                            <p className={`text-xl font-bold ${balance >= 0 ? 'text-slate-800' : 'text-red-600'}`}>
-                                                ฿{balance.toLocaleString()}
-                                            </p>
+                                    <div className="flex justify-between items-start mb-6">
+                                        <div className={`p-4 rounded-xl shadow-inner ${currentIconStyle}`}>
+                                            <FileText size={28}/>
                                         </div>
                                     </div>
-                                    <h3 className="font-bold text-lg text-slate-800 mb-2 group-hover:text-orange-600 pr-8">{acc.name}</h3>
-                                    <div className="text-xs text-slate-400 flex items-center gap-1">
-                                        แตะเพื่อดูรายละเอียด <ArrowRight size={12}/>
+                                    
+                                    <div className="space-y-2">
+                                        <h3 className="font-bold text-lg text-slate-800 leading-tight min-h-[3rem] line-clamp-2">
+                                            {acc.name}
+                                        </h3>
+                                        <div className="flex justify-between items-end border-t border-slate-200/50 pt-3">
+                                            <span className="text-xs text-slate-500 font-medium">ยอดคงเหลือ</span>
+                                            <span className={`text-2xl font-bold tracking-tight ${balance >= 0 ? 'text-slate-800' : 'text-red-600'}`}>
+                                                ฿{balance.toLocaleString()}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="absolute bottom-4 left-6 text-[10px] text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        แตะเพื่อดูรายละเอียด
+                                    </div>
+                                    <div className="absolute bottom-4 right-4 opacity-0 group-hover:opacity-100 transition-all transform group-hover:translate-x-1">
+                                        <ArrowRight className="text-slate-400"/>
                                     </div>
                                 </div>
                             );
@@ -706,9 +830,11 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
                         {canEditBudget && (
                             <button 
                                 onClick={() => setShowAccountForm(true)}
-                                className="border-2 border-dashed border-slate-300 rounded-xl p-6 flex flex-col items-center justify-center text-slate-400 hover:text-orange-600 hover:border-orange-300 hover:bg-orange-50 transition-all gap-2"
+                                className="border-2 border-dashed border-slate-300 rounded-2xl p-6 flex flex-col items-center justify-center text-slate-400 hover:text-orange-600 hover:border-orange-300 hover:bg-orange-50 transition-all gap-2 min-h-[220px]"
                             >
-                                <PlusCircle size={32}/>
+                                <div className="bg-slate-100 p-4 rounded-full group-hover:bg-orange-100 transition-colors">
+                                    <PlusCircle size={32}/>
+                                </div>
                                 <span className="font-bold">เปิดบัญชีใหม่</span>
                             </button>
                         )}
@@ -808,35 +934,6 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
                     </div>
                     
                     <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
-                        {/* IMPORT BUTTON & HELP */}
-                        <div className="relative flex items-center gap-1">
-                            <input 
-                                type="file" 
-                                ref={fileInputRef} 
-                                className="hidden" 
-                                accept=".xlsx, .xls"
-                                onChange={handleImportExcel}
-                            />
-                            {canEdit && (
-                                <>
-                                    <button 
-                                        onClick={() => fileInputRef.current?.click()}
-                                        disabled={isImporting}
-                                        className="bg-green-600 text-white px-4 py-2 rounded-lg shadow-sm hover:bg-green-700 font-bold flex items-center gap-2 text-sm disabled:opacity-50"
-                                    >
-                                        {isImporting ? <Loader className="animate-spin" size={16}/> : <Upload size={16}/>}
-                                        <span className="hidden sm:inline">นำเข้า Excel</span>
-                                    </button>
-                                    <button 
-                                        onClick={() => setShowImportHelp(true)}
-                                        className="text-slate-400 hover:text-blue-600 p-2 hover:bg-slate-100 rounded-full transition-colors"
-                                        title="ดูรูปแบบไฟล์ที่รองรับ"
-                                    >
-                                        <HelpCircle size={20} />
-                                    </button>
-                                </>
-                            )}
-                        </div>
                         
                         {/* PRINT BUTTON */}
                         <button 
@@ -1137,20 +1234,21 @@ const FinanceSystem: React.FC<FinanceSystemProps> = ({ currentUser, allTeachers 
                         </h3>
                         <div className="space-y-4 text-sm text-slate-600">
                             <div>
-                                <p className="font-bold text-slate-800 mb-2">1. ชื่อคอลัมน์ (หัวตาราง)</p>
+                                <p className="font-bold text-slate-800 mb-2">ชื่อคอลัมน์ (หัวตาราง)</p>
                                 <ul className="list-disc pl-5 space-y-1">
-                                    <li><span className="font-mono bg-slate-100 px-1 rounded">วันที่</span> หรือ Date</li>
-                                    <li><span className="font-mono bg-slate-100 px-1 rounded">รายการ</span> หรือ Description</li>
-                                    <li><span className="font-mono bg-slate-100 px-1 rounded">จำนวนเงิน</span> หรือ Amount</li>
-                                    <li><span className="font-mono bg-slate-100 px-1 rounded">ประเภท</span> (ถ้ามีคำว่า "จ่าย" = รายจ่าย, อื่นๆ = รายรับ)</li>
+                                    <li><span className="font-mono bg-slate-100 px-1 rounded">วันที่</span> (Date)</li>
+                                    <li><span className="font-mono bg-slate-100 px-1 rounded">ชื่อบัญชี</span> (Account Name) <span className="text-xs text-orange-500 font-bold">*สำคัญ</span></li>
+                                    <li><span className="font-mono bg-slate-100 px-1 rounded">รายการ</span> (Description)</li>
+                                    <li><span className="font-mono bg-slate-100 px-1 rounded">ฝาก/ถอน</span> หรือ ประเภท (Type)</li>
+                                    <li><span className="font-mono bg-slate-100 px-1 rounded">จำนวนเงิน</span> (Amount)</li>
                                 </ul>
                             </div>
-                            <div>
-                                <p className="font-bold text-slate-800 mb-2">2. รูปแบบวันที่</p>
-                                <ul className="list-disc pl-5 space-y-1">
-                                    <li>วว/ดด/ปปปป (พ.ศ. หรือ ค.ศ.) เช่น <code>31/01/2567</code></li>
-                                    <li>YYYY-MM-DD เช่น <code>2024-01-31</code></li>
-                                    <li>Format วันที่มาตรฐานของ Excel</li>
+                            <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
+                                <p className="font-bold text-blue-800 mb-1">💡 ระบบอัตโนมัติ:</p>
+                                <ul className="list-disc pl-5 space-y-1 text-blue-700">
+                                    <li>ระบบจะแยกรายการไปลงตาม <strong>ชื่อบัญชี</strong> ที่ระบุในไฟล์ให้อัตโนมัติ</li>
+                                    <li>ถ้ายังไม่มีบัญชีชื่อนั้น ระบบจะสร้างการ์ดบัญชีใหม่ให้ทันที</li>
+                                    <li>ถ้าช่อง "ฝาก/ถอน" มีคำว่า <strong>ถอน</strong> หรือ <strong>จ่าย</strong> ระบบจะบันทึกเป็นรายจ่าย (ตัวแดง) นอกนั้นเป็นรายรับ</li>
                                 </ul>
                             </div>
                         </div>

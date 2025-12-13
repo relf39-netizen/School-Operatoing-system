@@ -8,9 +8,10 @@ export enum SystemView {
   FINANCE = 'FINANCE',
   ATTENDANCE = 'ATTENDANCE',
   PLAN = 'PLAN',
+  ACADEMIC = 'ACADEMIC', // New View
   ADMIN_USERS = 'ADMIN_USERS',
   PROFILE = 'PROFILE',
-  DIRECTOR_CALENDAR = 'DIRECTOR_CALENDAR' // New View
+  DIRECTOR_CALENDAR = 'DIRECTOR_CALENDAR'
 }
 
 export type TeacherRole = 
@@ -20,6 +21,7 @@ export type TeacherRole =
   | 'FINANCE_BUDGET'    // การเงิน (งบประมาณ)
   | 'FINANCE_NONBUDGET' // การเงิน (นอกงบ)
   | 'PLAN_OFFICER'      // งานแผน (สร้างโครงการ)
+  | 'ACADEMIC_OFFICER'  // งานวิชาการ (New)
   | 'TEACHER';          // ครูทั่วไป
 
 export interface School {
@@ -187,17 +189,42 @@ export type ProjectStatus = 'Draft' | 'Approved' | 'Completed';
 export interface Project {
   id: string;
   name: string;
-  budget: number;
+  subsidyBudget: number; // เงินอุดหนุน (แผน)
+  learnerDevBudget: number; // เงินกิจกรรมพัฒนาผู้เรียน (แผน)
+  actualExpense?: number; // NEW: ยอดใช้จ่ายจริง
   status: ProjectStatus;
   rationale?: string;
+  fiscalYear?: string; // ปีงบประมาณ (e.g. "2567", "2568")
 }
 
 export interface PlanDepartment {
   id: string;
   schoolId?: string;
   name: string; // e.g., กลุ่มบริหารวิชาการ
-  allocatedBudget: number; // เงินที่ได้รับจัดสรร
   projects: Project[];
+}
+
+// --- Academic Types (New) ---
+
+export interface EnrollmentData {
+  id: string; // e.g., "enroll_2567"
+  schoolId: string;
+  year: string; // "2567"
+  levels: {
+      [key: string]: { m: number; f: number }; // key: "Anuban1", "Prathom1"
+  };
+}
+
+export type TestType = 'RT' | 'NT' | 'ONET';
+
+export interface TestScoreData {
+  id: string; // e.g., "score_onet_2567"
+  schoolId: string;
+  year: string;
+  testType: TestType;
+  results: {
+      [subject: string]: number; // e.g., "Thai": 50.5
+  };
 }
 
 // --- System Configuration ---
