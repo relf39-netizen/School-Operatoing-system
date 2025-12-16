@@ -803,7 +803,7 @@ const App: React.FC = () => {
                         <span className="font-bold text-sm md:text-base">{currentSchool?.name || 'SchoolOS System'}</span>
                     </div>
                     <div className="text-[10px] md:text-xs text-slate-400">
-                        © 2024 SchoolOS
+                        © MR SIAM CH
                     </div>
                 </div>
             </footer>
