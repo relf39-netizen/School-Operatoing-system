@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { DocumentItem, Teacher, Attachment, SystemConfig } from '../types';
 import { MOCK_DOCUMENTS } from '../constants';
-import { Search, FileText, Users, PenTool, CheckCircle, FilePlus, Eye, CheckSquare, Loader, Link as LinkIcon, Trash2, File as FileIcon, ExternalLink, Plus, UploadCloud, AlertTriangle, Monitor, FileCheck, ArrowLeft, Send, MousePointerClick, ChevronLeft, ChevronRight, FileBadge, Megaphone, Save, FileSpreadsheet, FileArchive, Image as ImageIcon, Bell, X, Info } from 'lucide-react';
+import { Search, FileText, Users, PenTool, CheckCircle, FilePlus, Eye, CheckSquare, Loader, Link as LinkIcon, Trash2, File as FileIcon, ExternalLink, Plus, UploadCloud, AlertTriangle, Monitor, FileCheck, ArrowLeft, Send, MousePointerClick, ChevronLeft, ChevronRight, FileBadge, Megaphone, Save, FileSpreadsheet, FileArchive, Image as ImageIcon, Bell, X, Info, Layers } from 'lucide-react';
 import { db, isConfigured, collection, addDoc, onSnapshot, query, orderBy, updateDoc, where, doc, getDoc, deleteDoc, getDocs, type QuerySnapshot, type DocumentData } from '../firebaseConfig';
 import { stampPdfDocument, stampReceiveNumber } from '../utils/pdfStamper';
 import { sendTelegramMessage } from '../utils/telegram';
@@ -68,11 +68,18 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
     const isSystemAdmin = currentUser.roles.includes('SYSTEM_ADMIN');
 
     // --- Background Task Manager Logic ---
+    const activeTasks = backgroundTasks.filter(t => t.status === 'processing' || t.status === 'uploading');
+    const doneTasksCount = backgroundTasks.filter(t => t.status === 'done').length;
+
     const updateTask = (id: string, updates: Partial<BackgroundTask>) => {
         setBackgroundTasks(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
     };
 
     const removeTask = (id: string) => {
+        setBackgroundTasks(prev => prev.filter(t => t.id !== id));
+    };
+
+    const autoRemoveDoneTask = (id: string) => {
         setTimeout(() => {
             setBackgroundTasks(prev => prev.filter(t => t.id !== id));
         }, 5000); // Keep done tasks for 5s
@@ -81,7 +88,6 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
     // Browser closure warning
     useEffect(() => {
         const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-            const activeTasks = backgroundTasks.filter(t => t.status === 'processing' || t.status === 'uploading');
             if (activeTasks.length > 0) {
                 e.preventDefault();
                 e.returnValue = "ระบบกำลังบันทึกข้อมูลและอัปโหลดไฟล์ไปที่ Google Drive กรุณารอสักครู่เพื่อป้องกันข้อมูลสูญหาย";
@@ -89,7 +95,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
         };
         window.addEventListener('beforeunload', handleBeforeUnload);
         return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-    }, [backgroundTasks]);
+    }, [activeTasks]);
 
     // --- Helpers ---
     const fileToBase64 = (file: File): Promise<string> => {
@@ -579,7 +585,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
             }
 
             updateTask(taskId, { status: 'done', message: 'ดำเนินการสั่งการสำเร็จ' });
-            removeTask(taskId);
+            autoRemoveDoneTask(taskId);
 
         } catch (error) {
             console.error("Background PDF Error", error);
@@ -661,7 +667,39 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
 
     return (
         <div className="space-y-6 animate-fade-in pb-10 relative">
-            {/* Background Task Queue UI */}
+            {/* Top Processing Status Bar */}
+            {activeTasks.length > 0 && (
+                <div className="fixed top-0 left-0 w-full z-[70] animate-slide-down pointer-events-none">
+                    <div className="bg-blue-600 text-white shadow-lg border-b border-blue-400 px-6 py-2 flex items-center justify-between pointer-events-auto">
+                        <div className="flex items-center gap-3">
+                            <div className="relative">
+                                <Layers size={18} className="animate-pulse" />
+                                <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-300 opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-100"></span>
+                                </span>
+                            </div>
+                            <span className="text-sm font-bold tracking-wide">
+                                กำลังดำเนินการ {activeTasks.length} รายการในฉากหลัง...
+                            </span>
+                        </div>
+                        <div className="flex items-center gap-4 text-[10px] opacity-90 uppercase font-mono">
+                            <span className="hidden sm:inline">กรุณาอย่าปิดบราวเซอร์จนกว่างานจะเสร็จสิ้น</span>
+                            <div className="flex gap-1">
+                                {activeTasks.map(t => (
+                                    <div key={t.id} className="w-2 h-2 rounded-full bg-white animate-bounce" style={{ animationDelay: `${Math.random()}s` }}></div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                    {/* Linear Progress Bar at top */}
+                    <div className="w-full h-1 bg-blue-800/30 overflow-hidden">
+                        <div className="h-full bg-blue-200 animate-shimmer" style={{ width: '40%' }}></div>
+                    </div>
+                </div>
+            )}
+
+            {/* Background Task Queue UI (Detailed - Bottom Right) */}
             {backgroundTasks.length > 0 && (
                 <div className="fixed bottom-20 right-6 z-[60] w-72 flex flex-col gap-2 pointer-events-none">
                     {backgroundTasks.map(task => (
@@ -670,13 +708,15 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                             task.status === 'error' ? 'bg-red-50 border-red-200' : 'bg-white border-slate-200'
                         }`}>
                             <div className="flex justify-between items-start">
-                                <div className="flex items-center gap-2">
-                                    {task.status === 'done' ? <CheckCircle className="text-emerald-600" size={16}/> : 
-                                     task.status === 'error' ? <AlertTriangle className="text-red-600" size={16}/> : 
-                                     <Loader className="animate-spin text-blue-600" size={16}/>}
-                                    <span className="text-xs font-bold text-slate-700 truncate max-w-[180px]">{task.title}</span>
+                                <div className="flex items-center gap-2 overflow-hidden">
+                                    {task.status === 'done' ? <CheckCircle className="text-emerald-600 shrink-0" size={16}/> : 
+                                     task.status === 'error' ? <AlertTriangle className="text-red-600 shrink-0" size={16}/> : 
+                                     <Loader className="animate-spin text-blue-600 shrink-0" size={16}/>}
+                                    <span className="text-xs font-bold text-slate-700 truncate">{task.title}</span>
                                 </div>
-                                {task.status === 'error' && <button onClick={() => removeTask(task.id)} className="text-slate-400 hover:text-slate-600"><X size={14}/></button>}
+                                {(task.status === 'error' || task.status === 'done') && (
+                                    <button onClick={() => removeTask(task.id)} className="text-slate-400 hover:text-slate-600 shrink-0"><X size={14}/></button>
+                                )}
                             </div>
                             <div className="w-full bg-slate-100 h-1 rounded-full overflow-hidden">
                                 <div className={`h-full transition-all duration-500 ${
@@ -685,7 +725,9 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                                     task.status === 'uploading' ? 'bg-orange-500 w-2/3' : 'bg-blue-500 w-1/3'
                                 }`}></div>
                             </div>
-                            <p className={`text-[10px] ${task.status === 'error' ? 'text-red-600' : 'text-slate-500'}`}>{task.message}</p>
+                            <p className={`text-[10px] ${task.status === 'error' ? 'text-red-600 font-bold' : (task.status === 'done' ? 'text-emerald-600' : 'text-slate-500')}`}>
+                                {task.message}
+                            </p>
                         </div>
                     ))}
                 </div>
@@ -693,7 +735,19 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
 
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-800 text-white p-4 rounded-xl">
                 <div>
-                    <h2 className="text-xl font-bold">ระบบงานสารบรรณอิเล็กทรอนิกส์</h2>
+                    <div className="flex items-center gap-3">
+                        <h2 className="text-xl font-bold">ระบบงานสารบรรณอิเล็กทรอนิกส์</h2>
+                        {activeTasks.length > 0 && (
+                            <span className="bg-blue-500 text-white text-[10px] px-2 py-0.5 rounded-full font-mono animate-pulse shadow-sm border border-blue-400">
+                                {activeTasks.length} งานกำลังประมวลผล
+                            </span>
+                        )}
+                        {doneTasksCount > 0 && activeTasks.length === 0 && (
+                            <span className="bg-emerald-500 text-white text-[10px] px-2 py-0.5 rounded-full font-mono shadow-sm border border-emerald-400">
+                                ประมวลผลเสร็จสิ้น
+                            </span>
+                        )}
+                    </div>
                     <p className="text-slate-300 text-sm">ผู้ใช้งาน: <span className="font-bold text-yellow-400">{currentUser.name}</span></p>
                 </div>
             </div>
@@ -1086,6 +1140,16 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                      )}
                 </div>
             )}
+            
+            <style>{`
+                @keyframes shimmer {
+                    0% { transform: translateX(-100%); }
+                    100% { transform: translateX(250%); }
+                }
+                .animate-shimmer {
+                    animation: shimmer 2s infinite linear;
+                }
+            `}</style>
         </div>
     );
 };
