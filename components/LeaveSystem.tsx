@@ -1,9 +1,9 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { LeaveRequest, Teacher, School, SystemConfig } from '../types';
-import { Clock, CheckCircle, XCircle, FilePlus, UserCheck, Printer, ArrowLeft, Loader, Database, Phone, Calendar, User, ChevronRight, Trash2, AlertCircle, Eye, Filter, Search, X } from 'lucide-react';
+import { Clock, CheckCircle, XCircle, FilePlus, UserCheck, Printer, ArrowLeft, Loader, Database, Calendar, User, ChevronRight, Trash2, AlertCircle, Eye, Filter, X, Calculator, FileText } from 'lucide-react';
 import { db, isConfigured, doc, getDoc, getDocs, addDoc, collection, updateDoc, deleteDoc, query, where, onSnapshot, QuerySnapshot, DocumentData } from '../firebaseConfig';
-import { generateOfficialLeavePdf } from '../utils/pdfStamper';
+import { generateOfficialLeavePdf, generateLeaveSummaryPdf } from '../utils/pdfStamper';
 import { sendTelegramMessage } from '../utils/telegram';
 
 interface LeaveSystemProps {
@@ -20,26 +20,30 @@ const LeaveSystem: React.FC<LeaveSystemProps> = ({ currentUser, allTeachers, cur
     const [isLoading, setIsLoading] = useState(true);
     const [dbError, setDbError] = useState<string | null>(null);
     
-    // View Modes: LIST | FORM | PDF | STATS
-    const [viewMode, setViewMode] = useState<'LIST' | 'FORM' | 'PDF' | 'STATS'>('LIST');
+    // View Modes: LIST | FORM | PDF | SUMMARY_PREVIEW
+    const [viewMode, setViewMode] = useState<'LIST' | 'FORM' | 'PDF' | 'SUMMARY_PREVIEW'>('LIST');
     const [selectedRequest, setSelectedRequest] = useState<LeaveRequest | null>(null);
     const [isHighlighted, setIsHighlighted] = useState(false);
 
-    // Statistics Modal State
+    // Statistics States
     const [showStatModal, setShowStatModal] = useState(false);
     const [statTeacher, setStatTeacher] = useState<Teacher | null>(null);
     const [statStartDate, setStatStartDate] = useState<string>(() => {
         const d = new Date();
-        return `${d.getFullYear()}-01-01`; // Default to start of year
+        return `${d.getFullYear()}-01-01`; 
     });
     const [statEndDate, setStatEndDate] = useState<string>(new Date().toISOString().split('T')[0]);
+
+    // Summary PDF State
+    const [summaryPdfUrl, setSummaryPdfUrl] = useState<string>('');
+    const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
 
     // Form State
     const [leaveType, setLeaveType] = useState('Sick');
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
     const [startTime, setStartTime] = useState('');
-    const [endTime, setEndTime] = useState('');
+    const [endTime, setEndDateManual] = useState('');
     const [reason, setReason] = useState('');
     const [contactInfo, setContactInfo] = useState('');
     const [mobilePhone, setMobilePhone] = useState('');
@@ -157,7 +161,7 @@ const LeaveSystem: React.FC<LeaveSystemProps> = ({ currentUser, allTeachers, cur
             }
         };
         generatePdf();
-    }, [viewMode, selectedRequest]);
+    }, [viewMode, selectedRequest, requests, allTeachers, currentSchool, sysConfig]);
 
     const calculateDays = (start: string, end: string) => {
         if (!start || !end) return 0;
@@ -178,7 +182,7 @@ const LeaveSystem: React.FC<LeaveSystemProps> = ({ currentUser, allTeachers, cur
 
     const getStatusBadge = (status: string) => {
         switch(status) {
-            case 'Approved': return <span className="text-green-600 bg-green-100 px-2 py-1 rounded-full text-xs font-bold flex items-center gap-1"><CheckCircle size={12}/> อนุมัติ</span>;
+            case 'Approved': return <span className="text-green-600 bg-green-50 px-2 py-1 rounded-full text-xs font-bold flex items-center gap-1"><CheckCircle size={12}/> อนุมัติ</span>;
             case 'Rejected': return <span className="text-red-600 bg-red-100 px-2 py-1 rounded-full text-xs font-bold flex items-center gap-1"><XCircle size={12}/> ไม่อนุมัติ</span>;
             default: return <span className="text-yellow-600 bg-yellow-100 px-2 py-1 rounded-full text-xs font-bold flex items-center gap-1"><Clock size={12}/> รอพิจารณา</span>;
         }
@@ -190,7 +194,7 @@ const LeaveSystem: React.FC<LeaveSystemProps> = ({ currentUser, allTeachers, cur
         setStartDate('');
         setEndDate('');
         setStartTime('');
-        setEndTime('');
+        setEndDateManual('');
         setReason('');
         setContactInfo('');
         setMobilePhone('');
@@ -219,15 +223,11 @@ const LeaveSystem: React.FC<LeaveSystemProps> = ({ currentUser, allTeachers, cur
         } catch(e) { alert("บันทึกล้มเหลว"); } finally { setIsUploading(false); setShowWarningModal(false); }
     };
 
-    const handleDelete = async (e: React.MouseEvent, reqId: string) => {
+    const handleDelete = async (e: React.MouseEvent, docId: string) => {
         e.stopPropagation();
         if (!confirm("คุณต้องการลบรายการนี้ใช่หรือไม่?")) return;
         try {
-            const q = query(collection(db, "leave_requests"), where("id", "==", reqId));
-            const snap = await getDocs(q);
-            if (!snap.empty) {
-                await deleteDoc(snap.docs[0].ref);
-            }
+            await deleteDoc(doc(db, "leave_requests", docId));
         } catch (e) { console.error(e); }
     };
 
@@ -245,7 +245,8 @@ const LeaveSystem: React.FC<LeaveSystemProps> = ({ currentUser, allTeachers, cur
             const targetTeacher = allTeachers.find(t => t.id === req.teacherId);
             if (targetTeacher?.telegramChatId && sysConfig?.telegramBotToken) {
                 const statusText = isApproved ? 'อนุมัติ' : 'ไม่อนุมัติ';
-                const message = `🔔 <b>แจ้งผลการพิจารณาใบลา</b>\nรายการ: ${getLeaveTypeName(req.type)}\nผลการพิจารณา: <b>${statusText}</b>\nโดย: ผู้อำนวยการ`;
+                const statusIcon = isApproved ? '✅' : '❌';
+                const message = `${statusIcon} <b>แจ้งผลการพิจารณาใบลา</b>\nรายการ: ${getLeaveTypeName(req.type)}\nผลการพิจารณา: <b>${statusText}</b>\nโดย: ผู้อำนวยการ`;
                 sendTelegramMessage(sysConfig.telegramBotToken, targetTeacher.telegramChatId, message, `${sysConfig.appBaseUrl}?view=LEAVE&id=${req.id}`);
             }
 
@@ -277,6 +278,37 @@ const LeaveSystem: React.FC<LeaveSystemProps> = ({ currentUser, allTeachers, cur
         };
     };
 
+    // --- Generate Summary PDF ---
+    const handleGenerateSummaryReport = async () => {
+        setIsGeneratingSummary(true);
+        try {
+            const director = allTeachers.find(t => t.roles.includes('DIRECTOR'));
+            const schoolTeachers = allTeachers.filter(t => t.schoolId === currentUser.schoolId);
+            
+            const base64Pdf = await generateLeaveSummaryPdf({
+                schoolName: currentSchool?.name || sysConfig?.schoolName || '...',
+                startDate: statStartDate,
+                endDate: statEndDate,
+                teachers: schoolTeachers,
+                getStatsFn: getTeacherStats,
+                directorName: director?.name || '...',
+                officialGarudaBase64: sysConfig?.officialGarudaBase64,
+                directorSignatureBase64: sysConfig?.directorSignatureBase64,
+                directorSignatureScale: sysConfig?.directorSignatureScale || 1.0,
+                directorSignatureYOffset: sysConfig?.directorSignatureYOffset || 0
+            });
+            
+            setSummaryPdfUrl(base64Pdf);
+            setViewMode('SUMMARY_PREVIEW');
+            setShowStatModal(false);
+        } catch (e) {
+            console.error(e);
+            alert("เกิดข้อผิดพลาดในการสร้างรายงาน");
+        } finally {
+            setIsGeneratingSummary(false);
+        }
+    };
+
     const filteredRequests = canViewAll ? requests : requests.filter(r => r.teacherId === currentUser.id);
     const pendingRequests = filteredRequests.filter(r => r.status === 'Pending');
     const historyRequests = filteredRequests.filter(r => r.status !== 'Pending');
@@ -292,27 +324,31 @@ const LeaveSystem: React.FC<LeaveSystemProps> = ({ currentUser, allTeachers, cur
                     <div>
                         <h2 className="text-xl font-bold leading-tight">ระบบการลาอิเล็กทรอนิกส์</h2>
                         <p className="text-[10px] opacity-80 flex items-center gap-1 uppercase tracking-wider">
+                            {/* Fix: Correct typo size(10} to size={10} */}
                             {dbError ? <AlertCircle size={10}/> : <Database size={10}/>}
-                            {dbError ? dbError : `SCHOOL ID: ${currentUser.schoolId}`}
+                            {dbError ? dbError : `SchoolID: ${currentUser.schoolId}`}
                         </p>
                     </div>
-                </div>
-                <div className="flex gap-2">
-                    {canViewAll && (
-                        <button onClick={() => setViewMode(viewMode === 'STATS' ? 'LIST' : 'STATS')} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all border ${viewMode === 'STATS' ? 'bg-white text-emerald-800' : 'bg-emerald-700 text-white border-emerald-600'}`}>
-                            {viewMode === 'STATS' ? 'ย้อนกลับ' : 'สรุปสถิติ'}
-                        </button>
-                    )}
                 </div>
             </div>
 
             {viewMode === 'LIST' && (
                 <>
-                    <div className="flex justify-between items-center">
+                    <div className="flex justify-between items-center bg-white p-3 rounded-xl shadow-sm border border-slate-200">
                         <div className="text-slate-600 font-bold flex items-center gap-2">รายการลา ({filteredRequests.length})</div>
-                        <button onClick={handleFormInit} className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg shadow-sm flex items-center gap-2 transition-transform active:scale-95">
-                            <FilePlus size={18} /> ยื่นใบลาใหม่
-                        </button>
+                        <div className="flex gap-2">
+                             {canViewAll && (
+                                <button 
+                                    onClick={() => { setStatTeacher(null); setShowStatModal(true); }}
+                                    className="bg-indigo-50 text-indigo-600 px-4 py-2 rounded-lg text-xs font-bold border border-indigo-100 flex items-center gap-2 hover:bg-indigo-600 hover:text-white transition-all"
+                                >
+                                    <Calculator size={16}/> สรุปยอดวันลา
+                                </button>
+                             )}
+                            <button onClick={handleFormInit} className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg shadow-sm flex items-center gap-2 transition-transform active:scale-95 text-xs font-bold">
+                                <FilePlus size={18} /> ยื่นใบลาใหม่
+                            </button>
+                        </div>
                     </div>
 
                     {pendingRequests.length > 0 && (
@@ -337,7 +373,7 @@ const LeaveSystem: React.FC<LeaveSystemProps> = ({ currentUser, allTeachers, cur
                                             <div className="flex justify-between border-b border-dashed border-slate-100 pb-1"><span className="text-slate-500">ประเภท:</span><span className="font-bold text-indigo-600">{getLeaveTypeName(req.type)}</span></div>
                                             <div className="flex justify-between border-b border-dashed border-slate-100 pb-1"><span className="text-slate-500">วันที่:</span><span className="font-bold text-xs">{getThaiDate(req.startDate)} - {getThaiDate(req.endDate)}</span></div>
                                         </div>
-                                        <div className="text-[10px] text-blue-600 font-bold flex justify-end items-center gap-1">คลิกตรวจสอบใบลา <ChevronRight size={12}/></div>
+                                        <div className="text-[10px] text-blue-600 font-bold flex justify-end items-center gap-1">คลิกตรวจสอบเพื่อพิจารณา <ChevronRight size={12}/></div>
                                     </div>
                                 ))}
                              </div>
@@ -345,13 +381,13 @@ const LeaveSystem: React.FC<LeaveSystemProps> = ({ currentUser, allTeachers, cur
                     )}
 
                     <div className="mt-8">
-                         <h3 className="text-slate-600 font-bold mb-3 flex items-center gap-2 text-sm uppercase tracking-widest"><Database size={16}/> ประวัติการลา</h3>
+                         <h3 className="text-slate-600 font-bold mb-3 flex items-center gap-2 text-sm uppercase tracking-widest"><Database size={16}/> ประวัติการลาล่าสุด</h3>
                          <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
                              {historyRequests.length === 0 ? <div className="p-12 text-center text-slate-400">ไม่พบข้อมูลประวัติ</div> : (
                                 <table className="w-full text-sm text-left">
                                     <thead className="bg-slate-50 text-slate-500 border-b">
                                         <tr>
-                                            <th className="px-4 py-3">วันที่ลา</th>
+                                            <th className="px-4 py-3">วันที่เริ่ม</th>
                                             <th className="px-4 py-3">ชื่อครู</th>
                                             <th className="px-4 py-3">ประเภท</th>
                                             <th className="px-4 py-3 text-center">สถานะ</th>
@@ -363,7 +399,7 @@ const LeaveSystem: React.FC<LeaveSystemProps> = ({ currentUser, allTeachers, cur
                                             <tr key={req.id} className="hover:bg-slate-50 transition-colors">
                                                 <td className="px-4 py-3 text-xs">{getThaiDate(req.startDate)}</td>
                                                 <td className="px-4 py-3 font-medium text-slate-800">{req.teacherName}</td>
-                                                <td className="px-4 py-3 text-xs">{getLeaveTypeName(req.type)}</td>
+                                                <td className="px-4 py-3 text-xs font-bold text-slate-600">{getLeaveTypeName(req.type)}</td>
                                                 <td className="px-4 py-3 text-center">{getStatusBadge(req.status)}</td>
                                                 <td className="px-4 py-3 text-right">
                                                     <div className="flex justify-end gap-1">
@@ -371,7 +407,14 @@ const LeaveSystem: React.FC<LeaveSystemProps> = ({ currentUser, allTeachers, cur
                                                             <Printer size={16}/>
                                                         </button>
                                                         {canViewAll && (
-                                                            <button onClick={() => { setStatTeacher(allTeachers.find(t => t.id === req.teacherId) || null); setShowStatModal(true); }} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="ดูสถิติ">
+                                                            <button 
+                                                                onClick={() => { 
+                                                                    setStatTeacher(allTeachers.find(t => t.id === req.teacherId) || { id: req.teacherId, name: req.teacherName, position: req.teacherPosition } as any); 
+                                                                    setShowStatModal(true); 
+                                                                }} 
+                                                                className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" 
+                                                                title="ดูสถิติบุคคล"
+                                                            >
                                                                 <Eye size={16}/>
                                                             </button>
                                                         )}
@@ -388,55 +431,9 @@ const LeaveSystem: React.FC<LeaveSystemProps> = ({ currentUser, allTeachers, cur
                 </>
             )}
 
-            {viewMode === 'STATS' && (
-                <div className="space-y-4 animate-slide-up">
-                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-                        <div>
-                            <h3 className="font-bold text-lg text-slate-800">สรุปสถิติการลาบุคลากร</h3>
-                            <p className="text-slate-500 text-xs">คลิกที่สัญลักษณ์รูปตาเพื่อดูรายละเอียดวันลารายบุคคล</p>
-                        </div>
-                    </div>
-
-                    <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-                        <table className="w-full text-sm text-left">
-                            <thead className="bg-slate-50 text-slate-500 border-b">
-                                <tr>
-                                    <th className="px-6 py-4">ชื่อ - นามสกุล</th>
-                                    <th className="px-6 py-4 text-center">ป่วย (วัน)</th>
-                                    <th className="px-6 py-4 text-center">กิจ (วัน)</th>
-                                    <th className="px-6 py-4 text-center">สาย (ครั้ง)</th>
-                                    <th className="px-6 py-4 text-right">รายละเอียด</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                                {allTeachers.filter(t => t.schoolId === currentUser.schoolId).map(t => {
-                                    const teacherStats = getTeacherStats(t.id, "0000-01-01", "9999-12-31");
-                                    return (
-                                        <tr key={t.id} className="hover:bg-slate-50 transition-colors">
-                                            <td className="px-6 py-4">
-                                                <div className="font-bold text-slate-800">{t.name}</div>
-                                                <div className="text-[10px] text-slate-400">{t.position}</div>
-                                            </td>
-                                            <td className="px-6 py-4 text-center font-bold text-red-600">{teacherStats.sick}</td>
-                                            <td className="px-6 py-4 text-center font-bold text-orange-600">{teacherStats.personal}</td>
-                                            <td className="px-6 py-4 text-center font-bold text-indigo-600">{teacherStats.late}</td>
-                                            <td className="px-6 py-4 text-right">
-                                                <button onClick={() => { setStatTeacher(t); setShowStatModal(true); }} className="inline-flex items-center gap-2 bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg font-bold hover:bg-blue-600 hover:text-white transition-all">
-                                                    <Eye size={14}/> สถิติ
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    );
-                                })}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            )}
-
             {viewMode === 'FORM' && (
                  <div className="max-w-2xl mx-auto bg-white p-8 rounded-2xl shadow-xl border border-emerald-50 relative animate-slide-up">
-                     <h3 className="text-xl font-bold mb-6 border-b pb-4 text-slate-800">แบบฟอร์มขออนุญาตลา</h3>
+                     <h3 className="text-xl font-bold mb-6 border-b pb-4 text-slate-800 flex items-center gap-2"><FilePlus className="text-emerald-600"/> แบบฟอร์มขออนุญาตลา</h3>
                      <form onSubmit={(e) => { 
                          e.preventDefault(); 
                          if (leaveType === 'OffCampus') {
@@ -459,15 +456,15 @@ const LeaveSystem: React.FC<LeaveSystemProps> = ({ currentUser, allTeachers, cur
                         {(leaveType === 'OffCampus' || leaveType === 'Late') && (
                             <div className="grid grid-cols-2 gap-4 animate-fade-in">
                                 <div><label className="block text-sm font-bold text-slate-700 mb-1">เวลาเริ่ม</label><input required type="time" value={startTime} onChange={e => setStartTime(e.target.value)} className="w-full px-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500 border-slate-200"/></div>
-                                {leaveType === 'OffCampus' && <div><label className="block text-sm font-bold text-slate-700 mb-1">ถึงเวลา</label><input required type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className="w-full px-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500 border-slate-200"/></div>}
+                                {leaveType === 'OffCampus' && <div><label className="block text-sm font-bold text-slate-700 mb-1">ถึงเวลา</label><input required type="time" value={endTime} onChange={e => setEndDateManual(e.target.value)} className="w-full px-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500 border-slate-200"/></div>}
                             </div>
                         )}
                         <div><label className="block text-sm font-bold text-slate-700 mb-1">เหตุผลการลา</label><textarea required value={reason} onChange={e => setReason(e.target.value)} rows={2} className="w-full px-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500 border-slate-200" placeholder="ระบุเหตุผล..."/></div>
-                        <div><label className="block text-sm font-bold text-slate-700 mb-1">เบอร์โทรศัพท์</label><input required type="tel" value={mobilePhone} onChange={e => setMobilePhone(e.target.value)} className="w-full px-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500 border-slate-200" placeholder="0XX-XXX-XXXX"/></div>
+                        <div><label className="block text-sm font-bold text-slate-700 mb-1">เบอร์โทรศัพท์ (ติดต่อได้ขณะลา)</label><input required type="tel" value={mobilePhone} onChange={e => setMobilePhone(e.target.value)} className="w-full px-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500 border-slate-200" placeholder="0XX-XXX-XXXX"/></div>
                         <div><label className="block text-sm font-bold text-slate-700 mb-1">ที่อยู่ที่ติดต่อได้</label><textarea required value={contactInfo} onChange={e => setContactInfo(e.target.value)} rows={2} className="w-full px-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500 border-slate-200"/></div>
                         <div className="flex gap-3 pt-4 border-t border-slate-100">
                             <button type="button" onClick={() => setViewMode('LIST')} className="flex-1 py-3 text-slate-600 bg-slate-100 rounded-xl font-bold hover:bg-slate-200 transition-colors">ยกเลิก</button>
-                            <button type="submit" disabled={isUploading} className="flex-1 py-3 bg-emerald-600 text-white rounded-xl font-bold shadow-lg disabled:opacity-50 hover:bg-emerald-700 transition-all">{isUploading ? 'กำลังส่ง...' : 'ยืนยันส่งใบลา'}</button>
+                            <button type="submit" disabled={isUploading} className="flex-1 py-3 bg-emerald-600 text-white rounded-xl font-bold shadow-lg disabled:opacity-50 hover:bg-emerald-700 transition-all">{isUploading ? 'กำลังส่ง...' : 'ยืนยันเสนอใบลา'}</button>
                         </div>
                      </form>
                  </div>
@@ -501,22 +498,43 @@ const LeaveSystem: React.FC<LeaveSystemProps> = ({ currentUser, allTeachers, cur
                                 <div className="flex justify-between border-b border-dashed border-slate-100 pb-1"><span className="text-slate-500">ผู้ลา:</span><span className="font-bold text-slate-800">{selectedRequest.teacherName}</span></div>
                                 <div className="flex justify-between border-b border-dashed border-slate-100 pb-1"><span className="text-slate-500">ประเภท:</span><span className="font-bold text-emerald-600">{getLeaveTypeName(selectedRequest.type)}</span></div>
                                 <div className="flex justify-between border-b border-dashed border-slate-100 pb-1"><span className="text-slate-500">สถานะ:</span>{getStatusBadge(selectedRequest.status)}</div>
+                                <div className="flex justify-between border-b border-dashed border-slate-100 pb-1"><span className="text-slate-500">วันที่เสนอ:</span><span>{getThaiDate(selectedRequest.createdAt || '')}</span></div>
                             </div>
                         </div>
                     </div>
                 </div>
             )}
 
+            {viewMode === 'SUMMARY_PREVIEW' && (
+                <div className="flex flex-col lg:flex-row gap-6 animate-slide-up">
+                    <div className="flex-1 bg-slate-500 rounded-2xl overflow-hidden shadow-2xl min-h-[500px] lg:min-h-[700px] relative border-4 border-white">
+                         <iframe src={summaryPdfUrl} className="w-full h-full border-none" title="Summary Report PDF"/>
+                    </div>
+                    <div className="w-full lg:w-80 space-y-4">
+                        <button onClick={() => setViewMode('LIST')} className="w-full py-3 bg-white text-slate-600 rounded-xl border font-bold flex items-center justify-center gap-2 hover:bg-slate-50 transition-all shadow-sm"><ArrowLeft size={18}/> ย้อนกลับ</button>
+                        <div className="bg-blue-50 p-5 rounded-2xl border border-blue-200 shadow-sm">
+                            <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2 text-sm"><FileText size={16}/> บันทึกข้อความสรุปการลา</h4>
+                            <p className="text-xs text-blue-600 leading-relaxed mb-4">
+                                เอกสารประกอบด้วยรายชื่อบุคลากรทุกคนพร้อมสถิติการลาในช่วงเวลาที่ท่านกำหนด สามารถพิมพ์เพื่อลงนาม และให้ครูลงชื่อรับทราบได้ทันที
+                            </p>
+                            <button onClick={() => window.print()} className="w-full py-3 bg-slate-800 text-white rounded-xl font-bold flex items-center justify-center gap-2 shadow-md hover:bg-black transition-all">
+                                <Printer size={18}/> พิมพ์รายงาน
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Statistics Modal */}
-            {showStatModal && statTeacher && (
+            {showStatModal && (
                 <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
                     <div className="bg-white rounded-3xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-scale-up">
                         <div className="p-6 bg-blue-600 text-white flex justify-between items-center">
                             <div className="flex items-center gap-3">
                                 <div className="bg-white/20 p-2 rounded-full"><Eye size={24}/></div>
                                 <div>
-                                    <h3 className="text-xl font-bold leading-none">{statTeacher.name}</h3>
-                                    <p className="text-xs opacity-80 mt-1">ตำแหน่ง: {statTeacher.position}</p>
+                                    <h3 className="text-xl font-bold leading-none">{statTeacher ? statTeacher.name : 'สรุปสถิติการลาบุคลากรทั้งหมด'}</h3>
+                                    <p className="text-xs opacity-80 mt-1">{statTeacher ? `ตำแหน่ง: ${statTeacher.position}` : 'ภาพรวมทั้งโรงเรียน'}</p>
                                 </div>
                             </div>
                             <button onClick={() => setShowStatModal(false)} className="bg-white/20 hover:bg-white/40 p-2 rounded-full transition-colors">
@@ -527,89 +545,152 @@ const LeaveSystem: React.FC<LeaveSystemProps> = ({ currentUser, allTeachers, cur
                         <div className="p-4 bg-slate-50 border-b flex flex-col md:flex-row gap-4 items-center justify-between">
                             <div className="flex items-center gap-3 w-full md:w-auto">
                                 <Filter size={18} className="text-slate-400"/>
-                                <div className="flex items-center gap-2 bg-white border px-3 py-1.5 rounded-xl shadow-sm">
-                                    <span className="text-xs font-bold text-slate-500">ตั้งแต่วันที่:</span>
+                                <div className="flex flex-wrap items-center gap-2 bg-white border px-3 py-1.5 rounded-xl shadow-sm">
+                                    <span className="text-xs font-bold text-slate-500">สรุปตั้งแต่วันที่:</span>
                                     <input type="date" value={statStartDate} onChange={(e) => setStatStartDate(e.target.value)} className="text-sm font-bold outline-none text-blue-600"/>
-                                    <span className="text-xs font-bold text-slate-500 mx-1">ถึง:</span>
+                                    <span className="text-xs font-bold text-slate-500 mx-1">ถึงวันที่:</span>
                                     <input type="date" value={statEndDate} onChange={(e) => setStatEndDate(e.target.value)} className="text-sm font-bold outline-none text-blue-600"/>
                                 </div>
                             </div>
-                            {(() => {
-                                const s = getTeacherStats(statTeacher.id, statStartDate, statEndDate);
-                                return (
-                                    <div className="flex gap-2 flex-wrap">
-                                        <div className="bg-red-50 text-red-600 px-3 py-1.5 rounded-xl border border-red-100 flex flex-col items-center min-w-[60px]">
-                                            <span className="text-[10px] font-bold uppercase">ป่วย</span>
-                                            <span className="text-lg font-black">{s.sick}</span>
-                                        </div>
-                                        <div className="bg-orange-50 text-orange-600 px-3 py-1.5 rounded-xl border border-orange-100 flex flex-col items-center min-w-[60px]">
-                                            <span className="text-[10px] font-bold uppercase">กิจ</span>
-                                            <span className="text-lg font-black">{s.personal}</span>
-                                        </div>
-                                        <div className="bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-xl border border-indigo-100 flex flex-col items-center min-w-[60px]">
-                                            <span className="text-[10px] font-bold uppercase">มาสาย</span>
-                                            <span className="text-lg font-black">{s.late}</span>
-                                        </div>
-                                        <div className="bg-emerald-50 text-emerald-600 px-3 py-1.5 rounded-xl border border-emerald-100 flex flex-col items-center min-w-[60px]">
-                                            <span className="text-[10px] font-bold uppercase">ออกนอก</span>
-                                            <span className="text-lg font-black">{s.offCampus}</span>
-                                        </div>
-                                    </div>
-                                );
-                            })()}
+                            {!statTeacher && (
+                                <button 
+                                    onClick={handleGenerateSummaryReport}
+                                    disabled={isGeneratingSummary}
+                                    className="bg-slate-800 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-black transition-all shadow-md disabled:opacity-50"
+                                >
+                                    {isGeneratingSummary ? <Loader className="animate-spin" size={14}/> : <FileText size={14}/>}
+                                    พิมพ์บันทึกสรุปการลาทั้งหมด
+                                </button>
+                            )}
                         </div>
 
-                        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-                            <h4 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><Database size={16}/> รายการประวัติการลาในช่วงเวลาที่เลือก</h4>
-                            <div className="bg-white border rounded-2xl overflow-hidden shadow-sm">
-                                <table className="w-full text-sm text-left">
-                                    <thead className="bg-slate-50 text-slate-500 border-b">
-                                        <tr>
-                                            <th className="px-6 py-3">วันที่</th>
-                                            <th className="px-6 py-3">ประเภท</th>
-                                            <th className="px-6 py-3">เหตุผล</th>
-                                            <th className="px-6 py-3 text-center">จำนวนวัน</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-100">
-                                        {(() => {
-                                            const filtered = requests.filter(r => 
-                                                r.teacherId === statTeacher.id && 
-                                                r.status === 'Approved' && 
-                                                r.startDate >= statStartDate && 
-                                                r.startDate <= statEndDate
-                                            ).sort((a,b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
+                        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar bg-slate-50/50">
+                            {statTeacher ? (
+                                <div className="space-y-6">
+                                     {(() => {
+                                        const s = getTeacherStats(statTeacher.id, statStartDate, statEndDate);
+                                        return (
+                                            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                                                <div className="bg-white p-4 rounded-2xl border border-red-100 text-center shadow-sm">
+                                                    <div className="text-[10px] font-bold text-red-400 uppercase mb-1">ลาป่วย (วัน)</div>
+                                                    <div className="text-2xl font-black text-red-600">{s.sick}</div>
+                                                </div>
+                                                <div className="bg-white p-4 rounded-2xl border border-orange-100 text-center shadow-sm">
+                                                    <div className="text-[10px] font-bold text-orange-400 uppercase mb-1">ลากิจ (วัน)</div>
+                                                    <div className="text-2xl font-black text-orange-600">{s.personal}</div>
+                                                </div>
+                                                <div className="bg-white p-4 rounded-2xl border border-purple-100 text-center shadow-sm">
+                                                    <div className="text-[10px] font-bold text-purple-400 uppercase mb-1">ลาคลอด (วัน)</div>
+                                                    <div className="text-2xl font-black text-purple-600">{s.maternity}</div>
+                                                </div>
+                                                <div className="bg-white p-4 rounded-2xl border border-indigo-100 text-center shadow-sm">
+                                                    <div className="text-[10px] font-bold text-indigo-400 uppercase mb-1">มาสาย (ครั้ง)</div>
+                                                    <div className="text-2xl font-black text-indigo-600">{s.late}</div>
+                                                </div>
+                                                <div className="bg-white p-4 rounded-2xl border border-emerald-100 text-center shadow-sm">
+                                                    <div className="text-[10px] font-bold text-emerald-400 uppercase mb-1">ออกนอก (ครั้ง)</div>
+                                                    <div className="text-2xl font-black text-emerald-600">{s.offCampus}</div>
+                                                </div>
+                                            </div>
+                                        );
+                                     })()}
 
-                                            return filtered.length === 0 ? (
-                                                <tr><td colSpan={4} className="text-center py-12 text-slate-400">ไม่พบรายการในช่วงเวลานี้</td></tr>
-                                            ) : filtered.map(r => (
-                                                <tr key={r.id} className="hover:bg-slate-50">
-                                                    <td className="px-6 py-4">
-                                                        <div className="font-bold text-slate-800">{getThaiDate(r.startDate)}</div>
-                                                        <div className="text-[10px] text-slate-400">ถึง {getThaiDate(r.endDate)}</div>
-                                                    </td>
-                                                    <td className="px-6 py-4">
-                                                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                                                            r.type === 'Sick' ? 'bg-red-50 text-red-600 border-red-100' : 
-                                                            r.type === 'Personal' ? 'bg-orange-50 text-orange-600 border-orange-100' : 
-                                                            'bg-blue-50 text-blue-600 border-blue-100'
-                                                        }`}>
-                                                            {getLeaveTypeName(r.type)}
-                                                        </span>
-                                                    </td>
-                                                    <td className="px-6 py-4 text-slate-500 italic max-w-xs truncate">{r.reason}</td>
-                                                    <td className="px-6 py-4 text-center font-bold text-slate-700">{calculateDays(r.startDate, r.endDate)}</td>
+                                    <div className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+                                        <table className="w-full text-sm text-left">
+                                            <thead className="bg-slate-50 text-slate-500 border-b">
+                                                <tr>
+                                                    <th className="px-6 py-3">วันที่เริ่มลา</th>
+                                                    <th className="px-6 py-3">ประเภท</th>
+                                                    <th className="px-6 py-3">เหตุผลการลา</th>
+                                                    <th className="px-6 py-3 text-center">จำนวนวัน</th>
                                                 </tr>
-                                            ));
-                                        })()}
-                                    </tbody>
-                                </table>
-                            </div>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100">
+                                                {(() => {
+                                                    const filtered = requests.filter(r => 
+                                                        r.teacherId === statTeacher.id && 
+                                                        r.status === 'Approved' && 
+                                                        r.startDate >= statStartDate && 
+                                                        r.startDate <= statEndDate
+                                                    ).sort((a,b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
+
+                                                    return filtered.length === 0 ? (
+                                                        <tr><td colSpan={4} className="text-center py-12 text-slate-400">ไม่พบรายการในช่วงเวลานี้</td></tr>
+                                                    ) : filtered.map(r => (
+                                                        <tr key={r.id} className="hover:bg-slate-50">
+                                                            <td className="px-6 py-4">
+                                                                <div className="font-bold text-slate-800">{getThaiDate(r.startDate)}</div>
+                                                                <div className="text-[10px] text-slate-400">ถึง {getThaiDate(r.endDate)}</div>
+                                                            </td>
+                                                            <td className="px-6 py-4">
+                                                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                                                    r.type === 'Sick' ? 'bg-red-50 text-red-600 border-red-100' : 
+                                                                    r.type === 'Personal' ? 'bg-orange-50 text-orange-600 border-orange-100' : 
+                                                                    'bg-blue-50 text-blue-600 border-blue-100'
+                                                                }`}>
+                                                                    {getLeaveTypeName(r.type)}
+                                                                </span>
+                                                            </td>
+                                                            <td className="px-6 py-4 text-slate-500 italic max-w-xs truncate">{r.reason}</td>
+                                                            <td className="px-6 py-4 text-center font-bold text-slate-700">{calculateDays(r.startDate, r.endDate)}</td>
+                                                        </tr>
+                                                    ));
+                                                })()}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="space-y-4">
+                                     <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+                                        <table className="w-full text-sm text-left">
+                                            <thead className="bg-slate-100 text-slate-600 font-bold border-b">
+                                                <tr>
+                                                    <th className="px-6 py-4">ชื่อ - นามสกุล</th>
+                                                    <th className="px-6 py-4 text-center">ป่วย (วัน)</th>
+                                                    <th className="px-6 py-4 text-center">กิจ (วัน)</th>
+                                                    <th className="px-6 py-4 text-center">สาย (ครั้ง)</th>
+                                                    <th className="px-6 py-4 text-right">สถิติละเอียด</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100">
+                                                {allTeachers.filter(t => t.schoolId === currentUser.schoolId).map(t => {
+                                                    const s = getTeacherStats(t.id, statStartDate, statEndDate);
+                                                    return (
+                                                        <tr key={t.id} className="hover:bg-slate-50 transition-colors">
+                                                            <td className="px-6 py-4">
+                                                                <div className="font-bold text-slate-800">{t.name}</div>
+                                                                <div className="text-[10px] text-slate-400">{t.position}</div>
+                                                            </td>
+                                                            <td className="px-6 py-4 text-center font-bold text-red-600">{s.sick}</td>
+                                                            <td className="px-6 py-4 text-center font-bold text-orange-600">{s.personal}</td>
+                                                            <td className="px-6 py-4 text-center font-bold text-indigo-600">{s.late}</td>
+                                                            <td className="px-6 py-4 text-right">
+                                                                <button 
+                                                                    onClick={() => setStatTeacher(t)}
+                                                                    className="inline-flex items-center gap-2 bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg font-bold hover:bg-blue-600 hover:text-white transition-all text-xs"
+                                                                >
+                                                                    <Eye size={14}/> ตรวจสอบ
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                         
-                        <div className="p-4 bg-slate-50 border-t flex justify-end">
-                            <button onClick={() => window.print()} className="px-6 py-2 bg-slate-800 text-white rounded-xl font-bold flex items-center gap-2 hover:bg-black transition-all shadow-md">
-                                <Printer size={18}/> พิมพ์สรุปสถิติ
+                        <div className="p-4 bg-slate-50 border-t flex justify-end gap-2">
+                             {statTeacher && (
+                                <button onClick={() => setStatTeacher(null)} className="px-4 py-2 bg-slate-200 text-slate-700 rounded-xl font-bold text-sm">
+                                    กลับไปดูรวม
+                                </button>
+                             )}
+                            <button onClick={() => window.print()} className="px-6 py-2 bg-slate-800 text-white rounded-xl font-bold flex items-center gap-2 hover:bg-black transition-all shadow-md text-sm">
+                                <Printer size={18}/> พิมพ์หน้าจอนี้
                             </button>
                         </div>
                     </div>
@@ -620,11 +701,11 @@ const LeaveSystem: React.FC<LeaveSystemProps> = ({ currentUser, allTeachers, cur
                  <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm">
                      <div className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl animate-scale-up text-center">
                          <div className="w-16 h-16 bg-yellow-100 text-yellow-600 rounded-full flex items-center justify-center mx-auto mb-4 border-2 border-yellow-200"><Clock size={32}/></div>
-                         <h3 className="text-xl font-bold text-slate-800">ยืนยันส่งใบลา?</h3>
+                         <h3 className="text-xl font-bold text-slate-800">แจ้งเตือนออกนอกบริเวณ</h3>
                          <p className="text-slate-500 mt-2 text-sm">เดือนนี้ท่านได้ขออนุญาตออกนอกสถานศึกษาไปแล้ว <span className="text-red-600 font-bold text-lg">{offCampusCount}</span> ครั้ง</p>
                          <div className="flex gap-3 mt-8">
                              <button onClick={() => setShowWarningModal(false)} className="flex-1 py-3 text-slate-600 bg-slate-100 rounded-xl font-bold hover:bg-slate-200 transition-colors">ยกเลิก</button>
-                             <button onClick={submitRequest} className="flex-1 py-3 bg-emerald-600 text-white rounded-xl font-bold shadow-lg hover:bg-emerald-700">ยืนยัน</button>
+                             <button onClick={submitRequest} className="flex-1 py-3 bg-emerald-600 text-white rounded-xl font-bold shadow-lg hover:bg-emerald-700">ยืนยันส่งใบลา</button>
                          </div>
                      </div>
                  </div>

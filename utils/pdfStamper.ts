@@ -41,7 +41,7 @@ const splitTextIntoLines = (text: string, maxWidth: number, fontSize: number, fo
     if (!text) return [];
     const words = text.split(''); // Thai characters don't have spaces like English
     const lines = [];
-    let currentLine = words[0];
+    let currentLine = words[0] || "";
 
     for (let i = 1; i < words.length; i++) {
         const word = words[i];
@@ -53,7 +53,7 @@ const splitTextIntoLines = (text: string, maxWidth: number, fontSize: number, fo
             currentLine = word;
         }
     }
-    lines.push(currentLine);
+    if (currentLine) lines.push(currentLine);
     return lines;
 };
 
@@ -97,9 +97,9 @@ export const stampReceiveNumber = async ({ fileBase64, bookNumber, date, time, s
     const { width, height } = firstPage.getSize();
 
     const fontSize = 14; 
-    const lineHeight = 18; // Increased from 14 for better spacing
+    const lineHeight = 18; 
     const boxWidth = 160; 
-    const boxHeight = 85; // Increased from 75 to fit taller lines
+    const boxHeight = 85; 
     const margin = 20;
     
     const x = width - boxWidth - margin;
@@ -191,7 +191,7 @@ interface StampOptions {
 }
 
 export const stampPdfDocument = async ({ 
-    fileUrl, fileType, commandText, directorName, signatureImageBase64, schoolName, schoolLogoBase64, targetPage = 1, onStatusChange, signatureScale = 1, signatureYOffset = 0
+    fileUrl, fileType, commandText, directorName, signatureImageBase64, schoolName, targetPage = 1, onStatusChange, signatureScale = 1, signatureYOffset = 0
 }: StampOptions): Promise<string> => {
     
     onStatusChange('กำลังโหลดฟอนต์และเตรียมเอกสาร...');
@@ -270,11 +270,10 @@ export const stampPdfDocument = async ({
     targetPdfPage.drawText(dateText, { x: centerX - (dateWidth / 2), y: footerY, size: fontSize, font: thaiFont, color: rgb(0, 0, 0) });
     footerY += lineHeight;
 
-    const schoolText = schoolName || 'โรงเรียน...................';
-    const schoolWidth = thaiFont.widthOfTextAtSize(schoolText, fontSize);
-    targetPdfPage.drawText(schoolText, { x: centerX - (schoolWidth / 2), y: footerY, size: fontSize, font: thaiFont, color: rgb(0, 0, 0) });
-    
-    // REMOVED LOGO DRAWING FROM DIRECTOR COMMAND AS REQUESTED
+    // แก้ไข: ใช้คำว่า "ผู้อำนวยการ" และต่อด้วย schoolName ซึ่งมักจะมีคำว่า "โรงเรียน" อยู่แล้ว
+    const posText = `ผู้อำนวยการ${schoolName || 'โรงเรียน...................'}`;
+    const posWidth = thaiFont.widthOfTextAtSize(posText, fontSize);
+    targetPdfPage.drawText(posText, { x: centerX - (posWidth / 2), y: footerY, size: fontSize, font: thaiFont, color: rgb(0, 0, 0) });
     footerY += lineHeight;
 
     const nameText = `( ${directorName} )`;
@@ -309,7 +308,7 @@ interface LeavePdfOptions {
     directorName: string;
     directorSignatureBase64?: string;
     teacherSignatureBase64?: string;
-    officialGarudaBase64?: string; // New: Custom Garuda
+    officialGarudaBase64?: string; 
     directorSignatureScale?: number;
     directorSignatureYOffset?: number;
 }
@@ -318,7 +317,7 @@ export const generateOfficialLeavePdf = async (options: LeavePdfOptions): Promis
     const { req, stats, teacher, schoolName, directorName, directorSignatureBase64, teacherSignatureBase64, officialGarudaBase64 } = options;
     
     const pdfDoc = await PDFDocument.create();
-    const page = pdfDoc.addPage([595.28, 841.89]); // A4
+    const page = pdfDoc.addPage([595.28, 841.89]); 
     const { width, height } = page.getSize();
     
     pdfDoc.registerFontkit(fontkit as any);
@@ -326,30 +325,24 @@ export const generateOfficialLeavePdf = async (options: LeavePdfOptions): Promis
     const thaiFont = await pdfDoc.embedFont(fontBytes);
 
     const fontSize = 16;
-    const lineHeight = 18; // Reduced spacing to match header
+    const lineHeight = 18; 
     const margin = 50;
     const contentWidth = width - (2 * margin);
-    const indent = 60; // Standard Thai indent
+    const indent = 60; 
 
-    // --- Helper to draw centered text ---
     const drawCentered = (text: string, y: number, size: number = 16) => {
         const textWidth = thaiFont.widthOfTextAtSize(text, size);
         page.drawText(text, { x: (width - textWidth) / 2, y, size, font: thaiFont });
     };
 
-    // --- Helper to draw Paragraph ---
-    // hasIndent: true = 1st line indented, wrapped lines flush left
-    // hasIndent: false = All lines flush left (used for continuous blocks that shouldn't re-indent)
     const drawParagraphContinuous = (text: string, startY: number, hasIndent: boolean = true) => {
         let curY = startY;
         let remainingText = text;
         
-        // 1. First Line
         let availableWidth = contentWidth - (hasIndent ? indent : 0);
         let words = remainingText.split('');
         let line = "";
         
-        // Consume words for first line
         while(words.length > 0) {
             const w = words[0];
             const testLine = line + w;
@@ -362,12 +355,10 @@ export const generateOfficialLeavePdf = async (options: LeavePdfOptions): Promis
             }
         }
         
-        // Draw first line
         page.drawText(line, { x: hasIndent ? margin + indent : margin, y: curY, size: fontSize, font: thaiFont });
         curY -= lineHeight;
         remainingText = words.join('');
         
-        // 2. Subsequent Lines (Aligned to Margin)
         if (remainingText.length > 0) {
             const subsequentLines = splitTextIntoLines(remainingText, contentWidth, fontSize, thaiFont);
             subsequentLines.forEach(l => {
@@ -379,7 +370,6 @@ export const generateOfficialLeavePdf = async (options: LeavePdfOptions): Promis
         return curY;
     };
 
-    // --- 1. Garuda ---
     try {
         let garudaImage;
         if (officialGarudaBase64) {
@@ -387,7 +377,6 @@ export const generateOfficialLeavePdf = async (options: LeavePdfOptions): Promis
              if (officialGarudaBase64.includes('png')) garudaImage = await pdfDoc.embedPng(gBytes);
              else garudaImage = await pdfDoc.embedJpg(gBytes);
         } else {
-             // Fallback
              const garudaUrl = "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8f/Emblem_of_the_Ministry_of_Education_of_Thailand.svg/1200px-Emblem_of_the_Ministry_of_Education_of_Thailand.svg.png";
              const resp = await fetch(garudaUrl);
              const garudaBuffer = await resp.arrayBuffer();
@@ -405,18 +394,15 @@ export const generateOfficialLeavePdf = async (options: LeavePdfOptions): Promis
 
     let currentY = height - margin - 80;
 
-    // --- 2. Title ---
     let formTitle = "แบบใบลาป่วย ลาคลอดบุตร ลากิจส่วนตัว";
     if (req.type === 'Late') formTitle = "แบบขออนุญาตเข้าสาย";
     if (req.type === 'OffCampus') formTitle = "แบบขออนุญาตออกนอกบริเวณโรงเรียน";
     drawCentered(formTitle, currentY, 20);
     currentY -= 30;
 
-    // --- 3. Location & Date ---
     const writeAt = `เขียนที่ ${schoolName}`;
     const dateStr = `วันที่ ${new Date().getDate()} เดือน ${new Date().toLocaleString('th-TH', { month: 'long' })} พ.ศ. ${new Date().getFullYear() + 543}`;
     
-    // Right align
     const writeAtWidth = thaiFont.widthOfTextAtSize(writeAt, fontSize);
     page.drawText(writeAt, { x: width - margin - writeAtWidth - 20, y: currentY, size: fontSize, font: thaiFont });
     currentY -= lineHeight;
@@ -425,32 +411,20 @@ export const generateOfficialLeavePdf = async (options: LeavePdfOptions): Promis
     page.drawText(dateStr, { x: width - margin - dateStrWidth - 20, y: currentY, size: fontSize, font: thaiFont });
     currentY -= (lineHeight * 2);
 
-    // --- 4. Subject & Dear (Adjusted Spacing) ---
     const getLeaveTypeName = (type: string) => {
         const map: any = { 'Sick': 'ป่วย', 'Personal': 'กิจส่วนตัว', 'OffCampus': 'ออกนอกบริเวณ', 'Late': 'เข้าสาย', 'Maternity': 'คลอดบุตร' };
         return map[type] || type;
     };
     
-    // Subject Line
     page.drawText(`เรื่อง  ขออนุญาต${getLeaveTypeName(req.type)}`, { x: margin, y: currentY, size: fontSize, font: thaiFont });
     currentY -= lineHeight;
-    
-    // 1 Line Gap between Subject and Dear
     currentY -= lineHeight;
-
-    // Dear Line
     page.drawText(`เรียน  ผู้อำนวยการ${schoolName}`, { x: margin, y: currentY, size: fontSize, font: thaiFont });
     currentY -= (lineHeight * 2);
 
-    // --- 5. Body Paragraphs (2 Paragraphs Total) ---
-
-    // === Paragraph 1 (Combined Block) ===
-    
-    // Part 1: Identity (Indented start)
     const p1_identity = `ข้าพเจ้า ${teacher.name} ตำแหน่ง ${teacher.position} สังกัด ${schoolName}`;
     currentY = drawParagraphContinuous(p1_identity, currentY, true);
 
-    // Part 2: Request (Flush Left - No Indent - Continuous Block)
     let p1_request = "";
     const startDate = formatDateThaiStr(req.startDate);
     const endDate = formatDateThaiStr(req.endDate);
@@ -462,53 +436,38 @@ export const generateOfficialLeavePdf = async (options: LeavePdfOptions): Promis
         p1_request = `มีความประสงค์ขอ${getLeaveTypeName(req.type)} เนื่องจาก ${req.reason} ตั้งแต่วันที่ ${startDate} ${timeText} ถึงวันที่ ${endDate}`;
     } else {
         const count = stats.currentDays || 0;
-        const reasonText = req.type === 'Maternity' ? `เนื่องจาก ${req.reason}` : `เนื่องจาก ${req.reason}`;
-        p1_request = `ขอลา${getLeaveTypeName(req.type)} ${reasonText} ตั้งแต่วันที่ ${startDate} ถึงวันที่ ${endDate} มีกำหนด ${count} วัน`;
+        p1_request = `ขอลา${getLeaveTypeName(req.type)} เนื่องจาก ${req.reason} ตั้งแต่วันที่ ${startDate} ถึงวันที่ ${endDate} มีกำหนด ${count} วัน`;
     }
-    // Draw flush left as requested "เสมอกับเรื่อง"
     currentY = drawParagraphContinuous(p1_request, currentY, false); 
 
-    // Part 3: History (Flush Left - No Indent - Continuous Block)
     const lastStart = stats.lastLeave ? formatDateThaiStr(stats.lastLeave.startDate) : "....................";
     const lastEnd = stats.lastLeave ? formatDateThaiStr(stats.lastLeave.endDate) : "....................";
     const lastDays = stats.lastLeave ? stats.lastLeaveDays : "..."; 
     
     const p1_history = `ข้าพเจ้าได้ลาครั้งสุดท้ายตั้งแต่วันที่ ${lastStart} ถึงวันที่ ${lastEnd} มีกำหนด ${lastDays} วัน`;
-    // Draw flush left as requested "ให้คิดขอบ"
     currentY = drawParagraphContinuous(p1_history, currentY, false);
 
-    // Gap before Paragraph 2
     currentY -= (lineHeight * 0.5);
 
-    // === Paragraph 2: Contact ===
     const p2_contact = `ในระหว่างลาติดต่อข้าพเจ้าได้ที่ ${req.contactInfo || '-'} เบอร์โทรศัพท์ ${req.mobilePhone || '-'}`;
-    currentY = drawParagraphContinuous(p2_contact, currentY, true); // Indented
+    currentY = drawParagraphContinuous(p2_contact, currentY, true); 
 
-    // Closing
     const p5 = "จึงเรียนมาเพื่อโปรดพิจารณา";
-    // Usually starts aligned with the paragraph indent
     page.drawText(p5, { x: margin + indent, y: currentY - lineHeight, size: fontSize, font: thaiFont });
     currentY -= (lineHeight * 3);
 
-    // === Signature Block (Centered Relative to "Sincerely") ===
-    
-    // Define reference center X for the signature block
-    // Positioned towards the right side
     const blockCenterX = width - 120; 
 
     const closingLabel = "ขอแสดงความนับถือ";
     const closingLabelWidth = thaiFont.widthOfTextAtSize(closingLabel, fontSize);
-    
-    // Draw "Sincerely" centered at blockCenterX
     page.drawText(closingLabel, { x: blockCenterX - (closingLabelWidth / 2), y: currentY, size: fontSize, font: thaiFont });
-    currentY -= 40; // Space for sig image
+    currentY -= 40; 
 
     if (teacherSignatureBase64) {
         try {
             const tSigBytes = dataURItoUint8Array(teacherSignatureBase64);
             const tSigImage = await pdfDoc.embedPng(tSigBytes);
             const tSigDim = tSigImage.scaleToFit(100, 40);
-            // Center image at blockCenterX
             page.drawImage(tSigImage, { x: blockCenterX - (tSigDim.width / 2), y: currentY, width: tSigDim.width, height: tSigDim.height });
         } catch(e) {}
     } else {
@@ -518,30 +477,22 @@ export const generateOfficialLeavePdf = async (options: LeavePdfOptions): Promis
     }
     
     currentY -= 20;
-
-    // Draw Name (Centered)
     const teacherNameLine = `( ${teacher.name} )`;
     const tNameWidth = thaiFont.widthOfTextAtSize(teacherNameLine, fontSize);
     page.drawText(teacherNameLine, { x: blockCenterX - (tNameWidth / 2), y: currentY, size: fontSize, font: thaiFont });
     currentY -= lineHeight;
-    
-    // Draw Position (Centered)
     const tPosLine = `ตำแหน่ง ${teacher.position}`;
     const tPosWidth = thaiFont.widthOfTextAtSize(tPosLine, fontSize);
     page.drawText(tPosLine, { x: blockCenterX - (tPosWidth / 2), y: currentY, size: fontSize, font: thaiFont });
     
     currentY -= (lineHeight * 2);
 
-    // --- 6. Stats Table & Director Section ---
     const tableTop = currentY;
-    
-    // Draw Table (Left Side)
     const col1 = margin;
     const col2 = col1 + 60;
     const col3 = col2 + 60;
     const col4 = col3 + 60;
     
-    // Headers
     const rowHeight = 20;
     const drawCell = (text: string, x: number, y: number, w: number) => {
         page.drawRectangle({ x, y: y - rowHeight + 5, width: w, height: rowHeight, borderColor: rgb(0,0,0), borderWidth: 0.5 });
@@ -579,7 +530,6 @@ export const generateOfficialLeavePdf = async (options: LeavePdfOptions): Promis
         });
     }
 
-    // --- Director Section (Right Side) ---
     const dirX = width / 2 + 20;
     const dirBoxHeight = 160; 
     const dirBoxY = tableTop - dirBoxHeight + 20; 
@@ -587,8 +537,6 @@ export const generateOfficialLeavePdf = async (options: LeavePdfOptions): Promis
     page.drawRectangle({ x: dirX, y: dirBoxY, width: 220, height: dirBoxHeight, borderColor: rgb(0,0,0), borderWidth: 0.5 });
     
     let dirTextY = dirBoxY + dirBoxHeight - 25; 
-    
-    // Header
     const commentHeader = "ความเห็น / คำสั่ง";
     const commentW = thaiFont.widthOfTextAtSize(commentHeader, 14);
     page.drawText(commentHeader, { x: dirX + (220 - commentW)/2, y: dirTextY, size: 14, font: thaiFont, color: rgb(0,0,0) });
@@ -598,9 +546,8 @@ export const generateOfficialLeavePdf = async (options: LeavePdfOptions): Promis
     page.drawText(isApproved ? "[ / ] อนุญาต" : "[   ] อนุญาต", { x: dirX + 20, y: dirTextY, size: 14, font: thaiFont });
     dirTextY -= 20;
     page.drawText(!isApproved && req.status === 'Rejected' ? "[ / ] ไม่อนุมัติ" : "[   ] ไม่อนุมัติ", { x: dirX + 20, y: dirTextY, size: 14, font: thaiFont });
-    dirTextY -= 30; // Space for sig
+    dirTextY -= 30; 
 
-    // Signature
     if (isApproved && directorSignatureBase64) {
         try {
             const dSigBytes = dataURItoUint8Array(directorSignatureBase64);
@@ -608,30 +555,148 @@ export const generateOfficialLeavePdf = async (options: LeavePdfOptions): Promis
             const scale = options.directorSignatureScale || 1;
             const dSigDim = dSigImage.scaleToFit(80 * scale, 40 * scale);
             const yOffset = options.directorSignatureYOffset || 0;
-            
-            // Center signature
             page.drawImage(dSigImage, { x: dirX + (220 - dSigDim.width)/2, y: dirTextY + yOffset, width: dSigDim.width, height: dSigDim.height });
         } catch(e) {}
     } 
     
     dirTextY -= 20;
-    // Director Name (Inside box)
     const dirNameLine = `( ${directorName} )`;
     const dNameWidth = thaiFont.widthOfTextAtSize(dirNameLine, 14);
     page.drawText(dirNameLine, { x: dirX + (220 - dNameWidth)/2, y: dirTextY, size: 14, font: thaiFont });
     dirTextY -= 15;
-    
-    // Position (Inside box)
     const dPosLine = "ตำแหน่ง ผู้อำนวยการโรงเรียน";
     const dPosWidth = thaiFont.widthOfTextAtSize(dPosLine, 14);
     page.drawText(dPosLine, { x: dirX + (220 - dPosWidth)/2, y: dirTextY, size: 14, font: thaiFont });
     dirTextY -= 15;
-    
-    // Date (Inside box)
     const approveDate = req.approvedDate ? formatDateThaiStr(req.approvedDate) : ".....................................";
     const dDateLine = `วันที่ ${approveDate}`;
     const dDateWidth = thaiFont.widthOfTextAtSize(dDateLine, 14);
     page.drawText(dDateLine, { x: dirX + (220 - dDateWidth)/2, y: dirTextY, size: 14, font: thaiFont });
+
+    return await pdfDoc.saveAsBase64({ dataUri: true });
+};
+
+// --- SUMMARY REPORT PDF ---
+
+interface SummaryPdfOptions {
+    schoolName: string;
+    startDate: string;
+    endDate: string;
+    teachers: any[];
+    getStatsFn: (teacherId: string, start: string, end: string) => any;
+    directorName: string;
+    officialGarudaBase64?: string;
+    directorSignatureBase64?: string;
+    directorSignatureScale?: number;
+    directorSignatureYOffset?: number;
+}
+
+export const generateLeaveSummaryPdf = async (options: SummaryPdfOptions): Promise<string> => {
+    const { schoolName, startDate, endDate, teachers, getStatsFn, directorName, officialGarudaBase64, directorSignatureBase64, directorSignatureScale = 1, directorSignatureYOffset = 0 } = options;
+
+    const pdfDoc = await PDFDocument.create();
+    pdfDoc.registerFontkit(fontkit as any);
+    const fontBytes = await fetchThaiFont();
+    const thaiFont = await pdfDoc.embedFont(fontBytes);
+
+    let page = pdfDoc.addPage([595.28, 841.89]);
+    const { width, height } = page.getSize();
+    let curY = height - 50;
+
+    // Header with Garuda
+    if (officialGarudaBase64) {
+        try {
+            const garuda = await pdfDoc.embedPng(dataURItoUint8Array(officialGarudaBase64));
+            const gDim = garuda.scaleToFit(60, 60);
+            page.drawImage(garuda, { x: 50, y: curY - 60, width: gDim.width, height: gDim.height });
+        } catch (e) {}
+    }
+    
+    page.drawText("บันทึกข้อความ", { x: 240, y: curY - 45, size: 24, font: thaiFont });
+    curY -= 80;
+
+    const headerFontSize = 16;
+    page.drawText(`ส่วนราชการ  ${schoolName}`, { x: 50, y: curY, size: headerFontSize, font: thaiFont });
+    curY -= 25;
+    page.drawText(`ที่  .................................................................`, { x: 50, y: curY, size: headerFontSize, font: thaiFont });
+    const dateText = `วันที่  ${new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })}`;
+    page.drawText(dateText, { x: 300, y: curY, size: headerFontSize, font: thaiFont });
+    curY -= 25;
+    page.drawText(`เรื่อง  สรุปสถิติการลาของบุคลากร ระหว่างวันที่ ${new Date(startDate).toLocaleDateString('th-TH')} ถึง ${new Date(endDate).toLocaleDateString('th-TH')}`, { x: 50, y: curY, size: headerFontSize, font: thaiFont });
+    curY -= 35;
+
+    page.drawText(`เรียน  บุคลากรทางการศึกษาโรงเรียน${schoolName}`, { x: 50, y: curY, size: 14, font: thaiFont });
+    curY -= 25;
+    
+    const intro = `ตามระเบียบว่าด้วยการลาของข้าราชการ พ.ศ. 2555 และนโยบายการบริหารบุคลากรของสถานศึกษา จึงขอแจ้งสรุปสถิติการลาประเภทต่างๆ เพื่อใช้ประกอบการพิจารณาความดีความชอบ และเพื่อให้บุคลากรได้ตรวจสอบความถูกต้องของข้อมูลตนเอง ดังนี้`;
+    const introLines = splitTextIntoLines(intro, width - 100, 14, thaiFont);
+    introLines.forEach(l => {
+        page.drawText(l, { x: 70, y: curY, size: 14, font: thaiFont });
+        curY -= 20;
+    });
+    curY -= 15;
+
+    // Table
+    const colX = [50, 80, 250, 290, 330, 370, 410, 450];
+    const tableHeaders = ["ที่", "ชื่อ-นามสกุล", "ป่วย", "กิจ", "ลอด", "สาย", "นอก", "ลงชื่อรับทราบ"];
+    
+    const drawTableHeader = (y: number) => {
+        page.drawRectangle({ x: 50, y: y - 5, width: width - 100, height: 25, color: rgb(0.95, 0.95, 0.95), borderColor: rgb(0,0,0), borderWidth: 1 });
+        tableHeaders.forEach((h, i) => {
+            page.drawText(h, { x: colX[i] + 5, y, size: 12, font: thaiFont });
+        });
+    };
+
+    drawTableHeader(curY);
+    curY -= 25;
+
+    teachers.forEach((t, idx) => {
+        if (curY < 150) { 
+            page = pdfDoc.addPage([595.28, 841.89]);
+            curY = height - 50;
+            drawTableHeader(curY);
+            curY -= 25;
+        }
+
+        const s = getStatsFn(t.id, startDate, endDate);
+        const rowData = [
+            (idx + 1).toString(),
+            t.name,
+            s.sick.toString(),
+            s.personal.toString(),
+            s.maternity.toString(),
+            s.late.toString(),
+            s.offCampus.toString(),
+            ".............................."
+        ];
+
+        page.drawRectangle({ x: 50, y: curY - 5, width: width - 100, height: 25, borderColor: rgb(0,0,0), borderWidth: 0.5 });
+        rowData.forEach((d, i) => {
+            page.drawText(d, { x: colX[i] + 5, y: curY, size: 11, font: thaiFont });
+        });
+        curY -= 25;
+    });
+
+    curY -= 60;
+    if (curY < 150) {
+        page = pdfDoc.addPage([595.28, 841.89]);
+        curY = height - 100;
+    }
+
+    const footerX = 320;
+    if (directorSignatureBase64) {
+        try {
+            const dSig = await pdfDoc.embedPng(dataURItoUint8Array(directorSignatureBase64));
+            const dDim = dSig.scaleToFit(100 * directorSignatureScale, 45 * directorSignatureScale);
+            page.drawImage(dSig, { x: footerX + 40, y: curY + directorSignatureYOffset + 10, width: dDim.width, height: dDim.height });
+        } catch (e) {}
+    }
+    
+    page.drawText(`(ลงชื่อ).................................................`, { x: footerX, y: curY - 15, size: 14, font: thaiFont });
+    page.drawText(`(${directorName})`, { x: footerX + 40, y: curY - 35, size: 14, font: thaiFont });
+    // แก้ไข: ใช้คำว่า "ผู้อำนวยการ" และต่อด้วย schoolName ซึ่งมักจะมีคำว่า "โรงเรียน" อยู่แล้ว
+    const posTextFooter = `ผู้อำนวยการ${schoolName || 'โรงเรียน...................'}`;
+    page.drawText(posTextFooter, { x: footerX + 25, y: curY - 55, size: 14, font: thaiFont });
 
     return await pdfDoc.saveAsBase64({ dataUri: true });
 };
