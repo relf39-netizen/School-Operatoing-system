@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { DocumentItem, Teacher, Attachment, SystemConfig } from '../types';
 import { MOCK_DOCUMENTS } from '../constants';
-import { Search, FileText, Users, PenTool, CheckCircle, FilePlus, Eye, CheckSquare, Loader, Link as LinkIcon, Trash2, File as FileIcon, ExternalLink, Plus, UploadCloud, AlertTriangle, Monitor, FileCheck, ArrowLeft, Send, MousePointerClick, ChevronLeft, ChevronRight, FileBadge, Megaphone, Save, FileSpreadsheet, FileArchive, Image as ImageIcon, Bell, X, Info, Layers } from 'lucide-react';
+import { Search, FileText, Users, PenTool, CheckCircle, FilePlus, Eye, CheckSquare, Loader, Link as LinkIcon, Trash2, File as FileIcon, ExternalLink, Plus, UploadCloud, AlertTriangle, Monitor, FileCheck, ArrowLeft, Send, MousePointerClick, ChevronLeft, ChevronRight, FileBadge, Megaphone, Save, FileSpreadsheet, FileArchive, Image as ImageIcon, Bell, X, Info, Layers, Zap } from 'lucide-react';
 import { db, isConfigured, collection, addDoc, onSnapshot, query, orderBy, updateDoc, where, doc, getDoc, deleteDoc, getDocs, type QuerySnapshot, type DocumentData } from '../firebaseConfig';
 import { stampPdfDocument, stampReceiveNumber } from '../utils/pdfStamper';
 import { sendTelegramMessage } from '../utils/telegram';
@@ -26,6 +26,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
     const [isLoading, setIsLoading] = useState(true);
     const [isUploading, setIsUploading] = useState(false);
     const [backgroundTasks, setBackgroundTasks] = useState<BackgroundTask[]>([]);
+    const [showTaskQueue, setShowTaskQueue] = useState(false);
     
     // Pagination State
     const [currentPage, setCurrentPage] = useState(1);
@@ -63,6 +64,9 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
     const [teacherSearchTerm, setTeacherSearchTerm] = useState(''); 
 
     // --- Roles Checking ---
+    // Fix: Define isAcknowledged at the component level for Detail View usage.
+    // It will be correctly shadowed by local variables in the list view map.
+    const isAcknowledged = selectedDoc?.acknowledgedBy?.includes(currentUser.id) || false;
     const isDirector = currentUser.roles.includes('DIRECTOR');
     const isDocOfficer = currentUser.roles.includes('DOCUMENT_OFFICER');
     const isSystemAdmin = currentUser.roles.includes('SYSTEM_ADMIN');
@@ -70,6 +74,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
     // --- Background Task Manager Logic ---
     const activeTasks = backgroundTasks.filter(t => t.status === 'processing' || t.status === 'uploading');
     const doneTasksCount = backgroundTasks.filter(t => t.status === 'done').length;
+    const latestTask = backgroundTasks[backgroundTasks.length - 1];
 
     const updateTask = (id: string, updates: Partial<BackgroundTask>) => {
         setBackgroundTasks(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
@@ -733,23 +738,68 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                 </div>
             )}
 
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-800 text-white p-4 rounded-xl">
-                <div>
-                    <div className="flex items-center gap-3">
-                        <h2 className="text-xl font-bold">ระบบงานสารบรรณอิเล็กทรอนิกส์</h2>
-                        {activeTasks.length > 0 && (
-                            <span className="bg-blue-500 text-white text-[10px] px-2 py-0.5 rounded-full font-mono animate-pulse shadow-sm border border-blue-400">
-                                {activeTasks.length} งานกำลังประมวลผล
-                            </span>
-                        )}
-                        {doneTasksCount > 0 && activeTasks.length === 0 && (
-                            <span className="bg-emerald-500 text-white text-[10px] px-2 py-0.5 rounded-full font-mono shadow-sm border border-emerald-400">
-                                ประมวลผลเสร็จสิ้น
-                            </span>
-                        )}
+            {/* HEADER WITH INTEGRATED STATUS TICKER */}
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-800 text-white p-4 rounded-xl shadow-lg border-b-4 border-slate-700 relative overflow-hidden group">
+                <div className="relative z-10 flex flex-col md:flex-row md:items-center gap-4 w-full">
+                    <div className="flex-1">
+                        <div className="flex items-center gap-3">
+                            <h2 className="text-xl font-bold tracking-tight">ระบบงานสารบรรณอิเล็กทรอนิกส์</h2>
+                            
+                            {/* Live Status Ticker for Desktop */}
+                            {latestTask && (
+                                <div className="hidden lg:flex items-center gap-2 bg-slate-700/50 px-3 py-1 rounded-full border border-slate-600 animate-fade-in max-w-md">
+                                    {latestTask.status === 'processing' || latestTask.status === 'uploading' ? (
+                                        <Loader size={14} className="animate-spin text-blue-400"/>
+                                    ) : latestTask.status === 'done' ? (
+                                        <Zap size={14} className="text-yellow-400 fill-current"/>
+                                    ) : <AlertTriangle size={14} className="text-red-400"/>}
+                                    <span className="text-[11px] font-medium text-slate-300 truncate">
+                                        {latestTask.status === 'done' ? `สำเร็จ: ${latestTask.title}` : latestTask.message}
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+                        <p className="text-slate-400 text-xs mt-1">ผู้ใช้งาน: <span className="font-bold text-yellow-400">{currentUser.name}</span></p>
                     </div>
-                    <p className="text-slate-300 text-sm">ผู้ใช้งาน: <span className="font-bold text-yellow-400">{currentUser.name}</span></p>
+
+                    <div className="flex items-center gap-3">
+                        {/* Notification Bell Badge */}
+                        <div className="relative">
+                            <button 
+                                onClick={() => setShowTaskQueue(!showTaskQueue)}
+                                className={`p-2 rounded-full transition-all hover:bg-slate-700 ${activeTasks.length > 0 ? 'bg-blue-600 shadow-lg shadow-blue-900/20' : 'bg-slate-700'}`}
+                            >
+                                <Bell size={20} className={activeTasks.length > 0 ? 'animate-bounce' : ''}/>
+                            </button>
+                            {(activeTasks.length > 0 || doneTasksCount > 0) && (
+                                <span className={`absolute -top-1 -right-1 flex items-center justify-center min-w-[18px] h-[18px] text-[10px] font-bold rounded-full border-2 border-slate-800 ${activeTasks.length > 0 ? 'bg-blue-500 text-white animate-pulse' : 'bg-emerald-500 text-white'}`}>
+                                    {activeTasks.length || doneTasksCount}
+                                </span>
+                            )}
+                        </div>
+
+                        {/* Summary Badges */}
+                        <div className="flex flex-col items-end gap-1">
+                            {activeTasks.length > 0 && (
+                                <span className="bg-blue-500/20 text-blue-400 text-[10px] px-2 py-0.5 rounded border border-blue-500/30 font-bold">
+                                    กำลังรัน {activeTasks.length} งาน
+                                </span>
+                            )}
+                            {doneTasksCount > 0 && activeTasks.length === 0 && (
+                                <span className="bg-emerald-500/20 text-emerald-400 text-[10px] px-2 py-0.5 rounded border border-emerald-500/30 font-bold">
+                                    ประมวลผลเรียบร้อย
+                                </span>
+                            )}
+                        </div>
+                    </div>
                 </div>
+
+                {/* Mobile Status Ticker Overlay */}
+                {latestTask && (latestTask.status === 'processing' || latestTask.status === 'uploading') && (
+                    <div className="lg:hidden absolute bottom-0 left-0 w-full h-1 bg-slate-700">
+                        <div className="h-full bg-blue-500 animate-shimmer" style={{ width: '30%' }}></div>
+                    </div>
+                )}
             </div>
 
             {viewMode === 'LIST' && (
@@ -890,7 +940,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                                                     );
                                                 })}
                                             </div>
-                                            {docItem.acknowledgedBy.includes(currentUser.id) && (
+                                            {isAcknowledged && (
                                                 <div className="mt-2 flex items-center justify-center gap-1 text-green-600 font-bold text-xs bg-green-50 px-2 py-1 rounded-full border border-green-100">
                                                     <CheckCircle size={12}/> ท่านได้รับทราบหนังสือฉบับนี้แล้ว
                                                 </div>
@@ -1118,7 +1168,7 @@ const DocumentsSystem: React.FC<DocumentsSystemProps> = ({ currentUser, allTeach
                             <button onClick={() => handleTeacherAcknowledge()} className="px-8 py-3 bg-orange-600 text-white rounded-xl hover:bg-orange-700 font-bold shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 mx-auto"><CheckSquare size={20}/> รับทราบ / อ่านแล้ว</button>
                         </div>
                     )}
-                     {selectedDoc.acknowledgedBy.includes(currentUser.id) && (
+                     {isAcknowledged && (
                         <div className="bg-green-50 p-4 rounded-xl border border-green-200 text-green-800 flex items-center justify-center gap-2 font-bold shadow-sm"><CheckSquare size={24}/> ท่านได้รับทราบหนังสือฉบับนี้แล้ว</div>
                      )}
                      {(isDirector || isDocOfficer) && selectedDoc.status === 'Distributed' && (

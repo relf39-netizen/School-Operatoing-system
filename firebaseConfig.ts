@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-// Fix: Group Firestore function imports and separate them from type-only imports to resolve resolution issues
+// Fix: Use proper modular imports for Firestore functions and types.
 import { 
   getFirestore, 
   collection, 
@@ -16,7 +16,6 @@ import {
   setDoc,
   Timestamp
 } from 'firebase/firestore';
-// Fix: Use separate import type syntax to support environments with older TypeScript versions (pre-4.5)
 import type { QuerySnapshot, DocumentData } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { getStorage } from 'firebase/storage';
@@ -56,7 +55,6 @@ if (isConfigured) {
 }
 
 // Re-export Firestore functions to be used throughout the app
-// Fix: Ensure modular SDK functions and types are properly exported for consumption by system components
 export { 
   db, 
   auth, 
